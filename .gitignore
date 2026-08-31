@@ -1,0 +1,4 @@
+/target/
+/bin/herdr-composer
+/bin/herdr-composer.new
+__pycache__/

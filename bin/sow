@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Keep the existing sow command and common flags while Composer owns launching.
+set -euo pipefail
+args=(launch --provider worktrunk --launch-mode worktree)
+while (($#)); do
+  case $1 in
+    --help|-h) args=(--help); shift; break ;;
+    --codex|--claude|--opencode2|--grok) args+=(--agent "${1#--}"); shift ;;
+    --here) args+=(--base current); shift ;;
+    -a|--agent|-b|--branch|-C|--repo|--base|--model|--effort|--speed|--attach)
+      (($# >= 2)) || { printf 'sow: missing value for %s\n' "$1" >&2; exit 2; }
+      case $1 in -a) key=--agent ;; -b) key=--branch ;; -C) key=--repo ;; *) key=$1 ;; esac
+      args+=("$key" "$2"); shift 2 ;;
+    --focus|--no-focus) args+=("$1"); shift ;;
+    --) shift; args+=(-- "$*"); break ;;
+    -) args+=(-); shift; (($# == 0)) || { printf 'sow: - reads the task from stdin\n' >&2; exit 2; }; break ;;
+    -*) printf 'sow: unsupported option %s; use sow --help\n' "$1" >&2; exit 2 ;;
+    *) args+=(-- "$*"); break ;;
+  esac
+done
+herdr=${HERDR_BIN_PATH:-herdr}
+plugin_root=$("$herdr" plugin list --plugin composer --json \
+  | jq -r '.result.plugins[] | select(.plugin_id == "composer" and .enabled) | .plugin_root')
+[[ -n $plugin_root && -x $plugin_root/bin/herdr-composer ]] || {
+  printf 'sow: install and build Herdr Composer first\n' >&2
+  exit 1
+}
+exec "$plugin_root/bin/herdr-composer" "${args[@]}"

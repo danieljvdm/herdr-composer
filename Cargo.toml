@@ -1,0 +1,23 @@
+[package]
+name = "herdr-composer"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Compose tasks and launch coding agents in Herdr worktrees or tabs"
+repository = "https://github.com/danieljvdm/herdr-composer"
+readme = "README.md"
+
+[dependencies]
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = "0.29.0"
+ratatui-textarea = "0.9.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+sha2 = "0.10"
+shlex = "1"
+toml = "0.9"
+
+[profile.release]
+strip = true
+lto = "thin"

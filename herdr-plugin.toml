@@ -1,0 +1,33 @@
+id = "composer"
+name = "Herdr Composer"
+version = "0.2.0"
+min_herdr_version = "0.8.2"
+description = "Compose tasks and launch coding agents in worktrees or tabs"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["bash", "build-composer.sh"]
+
+[[actions]]
+id = "compose"
+title = "Composer: new task"
+contexts = ["workspace", "global"]
+command = ["bin/herdr-composer", "__action", "compose"]
+
+[[actions]]
+id = "remove-current"
+title = "Composer: remove current session"
+contexts = ["workspace"]
+command = ["bin/herdr-composer", "__action", "remove-current"]
+
+[[panes]]
+id = "composer"
+title = "New task"
+placement = "overlay"
+command = ["herdr-composer"]
+
+[[panes]]
+id = "remove-current"
+title = "Remove Composer session"
+placement = "overlay"
+command = ["herdr-composer", "__confirm-remove"]

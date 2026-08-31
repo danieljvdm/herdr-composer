@@ -1,0 +1,7 @@
+{
+  "claude": [
+    {"id":"sonnet","label":"Sonnet","order":10},
+    {"id":"opus","label":"Opus","order":20},
+    {"id":"haiku","label":"Haiku","order":30}
+  ]
+}
