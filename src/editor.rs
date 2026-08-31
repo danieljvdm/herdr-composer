@@ -174,6 +174,8 @@ pub fn run(paths: &Paths) -> Result<()> {
                         app.message="Catalog is still loading. Your task is saved; launch again when it finishes.".into();
                         continue;
                     }
+                    app.message = "Preparing task…".into();
+                    terminal.draw(|f| ui::draw(f, &mut app))?;
                     let result = request::resolve(
                         &draft,
                         &config,

@@ -84,6 +84,40 @@ is an explicit setting. Codex maps it to `service_tier="default"`, and Fast to
 Unknown custom models require an explicit agent and `allow_custom_model=true`;
 they receive no invented effort or speed support.
 
+## Branch naming
+
+Model-generated branch names are optional and use a separate Codex call. Configure
+the naming model independently of the agent that performs the task:
+
+```toml
+[branch_naming]
+enabled = true
+model = "model-id-from-your-codex"
+effort = "medium"
+speed = "fast"
+prefix = ""
+```
+
+Naming is disabled by default. `model` is required when enabled; omitted effort
+and speed use Codex defaults. Speed accepts `fast` or `normal`. `prefix` is added
+to the generated name, for example `team/`. These settings never change the task
+agent's model, effort, or speed.
+
+An explicit branch name or a valid prose-resolver branch suggestion takes
+precedence. Tab launches and tasks without text skip naming. For other worktree
+launches, Composer sends the task text to `codex exec` on stdin after validating
+the launch settings. This requires an authenticated Codex CLI with support for
+ephemeral execution and `--ignore-user-config`. The naming call uses read-only
+mode with shell tools, agent delegation, and web search disabled. It runs outside
+the repository and does not load project instructions or the user's Codex config.
+
+Naming has a 20-second timeout. Failure, invalid output, or an existing branch
+name falls back to a unique `task-<id>` name. The reason appears in CLI/runner
+output and the saved session record. To choose a name yourself, use the editor's
+Branch name field or CLI `--branch`.
+
+## Prose suggestions
+
 Prose suggestions are off by default. Set top-level
 `prose_resolver = ["/absolute/program", "arg"]` to enable one invocation per
 submission, bounded to five seconds. Input contains `version`, literal `task`,

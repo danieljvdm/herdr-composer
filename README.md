@@ -77,6 +77,10 @@ The CLI and editor use the same settings. In worktree mode, `--branch` must name
 `--base current` starts from the invoking checkout. See `herdr-composer --help`
 for all options.
 
+To generate branch names with a separate model, enable
+[`branch_naming`](docs/configuration.md#branch-naming). Its model, effort, speed,
+and prefix are configurable. Explicit branch names always take precedence.
+
 ## Native worktrees or Worktrunk
 
 New-worktree mode uses native Herdr worktrees by default. To use Worktrunk's checkout

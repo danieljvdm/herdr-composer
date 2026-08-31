@@ -611,6 +611,11 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         .into());
     }
     println!("Preparing session {id}");
+    if let Some(req) = &r.request {
+        for diagnostic in &req.diagnostics {
+            println!("{diagnostic}");
+        }
+    }
     let result = (|| -> Result<()> {
         prepare(state, &mut r)?;
         let req = r.request.as_ref().unwrap().clone();

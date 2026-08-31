@@ -22,6 +22,14 @@ fn launch_mode_defaults_and_saved_choices_are_typed() {
     let restored: Draft = serde_json::from_str(&serde_json::to_string(&selected).unwrap()).unwrap();
     assert_eq!(selected, restored);
 }
+#[test]
+fn branch_naming_is_optional_and_separate_from_task_defaults() {
+    let c: Config = toml::from_str("[branch_naming]\nenabled=true\nmodel='fixture-namer'\neffort='medium'\nspeed='fast'\nprefix='team/'").unwrap();
+    assert!(c.branch_naming.enabled);
+    assert_eq!(c.branch_naming.model, "fixture-namer");
+    assert!(c.defaults.model.is_empty());
+    assert!(!Config::default().branch_naming.enabled);
+}
 fn temp() -> PathBuf {
     let p = std::env::temp_dir().join(format!("composer-test-{}", request::launch_id()));
     fs::create_dir_all(&p).unwrap();

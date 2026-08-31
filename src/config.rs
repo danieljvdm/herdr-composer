@@ -36,12 +36,22 @@ pub struct Provider {
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct BranchNaming {
+    pub enabled: bool,
+    pub model: String,
+    pub effort: String,
+    pub speed: String,
+    pub prefix: String,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub defaults: Defaults,
     pub repositories: Vec<String>,
     pub agents: BTreeMap<String, Agent>,
     pub providers: BTreeMap<String, Provider>,
     pub prose_resolver: Vec<String>,
+    pub branch_naming: BranchNaming,
 }
 #[derive(Clone)]
 pub struct Paths {

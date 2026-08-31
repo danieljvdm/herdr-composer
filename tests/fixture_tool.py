@@ -23,7 +23,7 @@ def workspace(path,repo):
     state['tabs'].append({'tab_id':wid+':t1','workspace_id':wid,'pane_id':wid+':p1','cwd':str(path)})
     return {'workspace':w,'root_pane':{'pane_id':wid+':p1'}}
 def prepare(repo,branch,base):
-    target=(root/'checkouts'/branch).resolve();target.parent.mkdir(exist_ok=True)
+    target=(root/'checkouts'/branch).resolve();target.parent.mkdir(parents=True,exist_ok=True)
     git(repo,'worktree','add','-b',branch,str(target),base or 'HEAD')
     return target
 try:
@@ -35,7 +35,12 @@ try:
                 print(json.dumps({'path':str(target)}));print('blocking hook failed',file=sys.stderr);sys.exit(1)
             (root/'hook-finished').write_text('done');print(json.dumps({'path':str(target)}))
         elif args[0]=='remove': git(repo,'worktree','remove',args[1]);print('branch kept')
-    elif program=='codex': pass
+    elif program=='codex':
+        if args and args[0]=='exec':
+            (root/'naming-input.json').write_text(sys.stdin.read())
+            if os.environ.get('FIXTURE_NAMING_FAIL'): raise RuntimeError('naming unavailable')
+            if os.environ.get('FIXTURE_NAMING_EMPTY'): sys.exit(0)
+            print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':os.environ.get('FIXTURE_BRANCH_NAME','fix-login-redirect')}}))
     elif program=='herdr':
         command=args[:2]
         if command==['workspace','list']: emit({'workspaces':state['workspaces']})

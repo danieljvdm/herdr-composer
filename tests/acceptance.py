@@ -131,3 +131,35 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     path,id=launch(root,linked,env,extra=['--launch-mode','tab']);run(['__run',id],env,linked);receipt=json.loads(path.read_text())['receipt'];assert pathlib.Path(receipt['checkout'])==linked.resolve()
     run(['__remove',id],env,repo);assert linked.exists()
 print('Acceptance passed: launch defaults and overrides, shared-checkout tabs, tab-specific cleanup, native worktrees, Worktrunk hooks, custom providers, delivery states, replay guards, literal input.')
+
+with tempfile.TemporaryDirectory(prefix='composer-naming-') as tmp:
+    root=pathlib.Path(tmp);repo,env=setup(root)
+    base_config=(root/'config/config.toml').read_text()
+    naming_config=base_config+'\n[branch_naming]\nenabled=true\nmodel="fixture-namer"\neffort="medium"\nspeed="fast"\nprefix="test/"\n'
+    (root/'config/config.toml').write_text(naming_config)
+    def naming_calls():return [args for program,args in calls(root) if program=='codex' and args[:1]==['exec']]
+    literal='Fix `login`\n$(touch never)\n日本語\n'
+    path,id=launch(root,repo,env,task=literal);record=json.loads(path.read_text())
+    assert record['request']['branch']=='test/fix-login-redirect'
+    assert json.loads((root/'naming-input.json').read_text())=={'task':literal}
+    args=naming_calls()[-1];assert args[args.index('--model')+1]=='fixture-namer'
+    assert 'model_reasoning_effort="medium"' in args and 'service_tier="fast"' in args
+    assert '--ephemeral' in args and args[args.index('--sandbox')+1]=='read-only'
+    assert literal not in ' '.join(args)
+    assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
+    run(['__run',id],env,repo)
+    # A generated name that already exists falls back without failing the task.
+    path,id=launch(root,repo,env);r=json.loads(path.read_text())['request'];assert r['branch'].startswith('task-') and r['diagnostics']
+    before=len(naming_calls())
+    path,id=launch(root,repo,env,extra=['--branch','manual-name']);assert json.loads(path.read_text())['request']['branch']=='manual-name'
+    run(['launch','branch:inline-name Fix login'],env,repo)
+    path,id=launch(root,repo,env,extra=['--launch-mode','tab']);assert json.loads(path.read_text())['request']['branch']=='main'
+    run(['launch','--model','invalid','task'],env,repo,ok=False)
+    assert len(naming_calls())==before,'explicit branches, tab mode, and invalid requests must skip naming'
+    for extra_env in [{'FIXTURE_BRANCH_NAME':'../invalid'},{'FIXTURE_NAMING_FAIL':'1'},{'FIXTURE_NAMING_EMPTY':'1'}]:
+        path,id=launch(root,repo,dict(env,**extra_env));r=json.loads(path.read_text())['request']
+        assert r['branch'].startswith('task-') and any('Branch naming failed' in d for d in r['diagnostics'])
+    (root/'config/config.toml').write_text(naming_config.replace('enabled=true','enabled=false'))
+    before=len(naming_calls());path,id=launch(root,repo,env);assert len(naming_calls())==before
+    assert json.loads(path.read_text())['request']['branch'].startswith('task-')
+print('Branch naming passed: separate model settings, literal input, precedence, collision/failure fallback, disabled mode.')
