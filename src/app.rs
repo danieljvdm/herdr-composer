@@ -83,6 +83,7 @@ impl Picker {
 pub struct App {
     pub config: Config,
     pub settings: Draft,
+    repo_label: String,
     pub text: TextArea<'static>,
     pub focused: Field,
     last_setting: Field,
@@ -139,6 +140,7 @@ impl App {
             || !settings.base.is_empty()
             || !settings.speed.is_empty();
         Self {
+            repo_label: repository_name(&settings.repo),
             message: config.message.clone(),
             config,
             settings,
@@ -232,7 +234,7 @@ impl App {
                 if self.settings.repo.is_empty() {
                     "Choose repository".into()
                 } else {
-                    short_repo(&self.settings.repo)
+                    self.repo_label.clone()
                 }
             }
             Field::Provider => or_default(
@@ -358,7 +360,7 @@ impl App {
                 self.config
                     .repos
                     .iter()
-                    .map(|p| (p.clone(), short_repo(p)))
+                    .map(|p| (p.clone(), repository_name(p)))
                     .collect(),
                 String::new(),
                 true,
@@ -497,6 +499,7 @@ impl App {
                 }
             }
             Field::Repo => {
+                self.repo_label = repository_name(&value);
                 self.settings.repo = value;
                 self.settings.repo_explicit = true;
             }
@@ -892,11 +895,19 @@ impl App {
     }
 }
 
-pub fn short_repo(value: &str) -> String {
-    Path::new(value)
+fn repository_name(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    let root = herdr_composer::request::primary(Path::new(value)).ok();
+    short_repo(root.as_deref().unwrap_or_else(|| Path::new(value)))
+}
+
+fn short_repo(value: &Path) -> String {
+    value
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| value.into())
+        .unwrap_or_else(|| value.to_string_lossy().into_owned())
 }
 fn or_default(value: &str, default: &str) -> String {
     if value.is_empty() {
@@ -912,6 +923,60 @@ mod tests {
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
     }
+    #[test]
+    fn linked_checkout_shows_repository_name_and_keeps_launch_path() {
+        use herdr_composer::{process::git, request};
+        let root = std::env::temp_dir().join(format!("composer-repo-{}", request::launch_id()));
+        let repo = root.join("effect-agent");
+        let linked = root.join("topic-checkout");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]).unwrap();
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        )
+        .unwrap();
+        git(
+            &repo,
+            &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+        )
+        .unwrap();
+        let checkout = linked.to_string_lossy().into_owned();
+        let config = Config {
+            repo: repo.to_string_lossy().into_owned(),
+            repos: vec![checkout.clone()],
+            ..Config::default()
+        };
+        let mut app = App::new(
+            config.clone(),
+            Some(Draft {
+                repo: checkout.clone(),
+                ..Draft::default()
+            }),
+        );
+        assert_eq!(app.value(Field::Repo), "effect-agent");
+        assert_eq!(app.draft().repo, checkout);
+        app = App::new(config, None);
+        app.open(Field::Repo);
+        assert_eq!(
+            app.picker.as_ref().unwrap().options,
+            vec![(checkout.clone(), "effect-agent".into())]
+        );
+        app.event(key(KeyCode::Enter));
+        assert_eq!(app.value(Field::Repo), "effect-agent");
+        assert_eq!(app.draft().repo, checkout);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn multiline_paste_and_undo_preserve_literal_task() {
         let mut app = App::new(Config::default(), None);

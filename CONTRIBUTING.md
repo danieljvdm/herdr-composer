@@ -19,6 +19,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
+python3 tests/catalog_test.py
 python3 tests/acceptance.py
 python3 tests/composer_pty_test.py
 python3 tests/import_test.py
@@ -56,3 +57,21 @@ next workspace mutation. A lost prompt response must remain Unknown; it must
 not trigger an automatic resend.
 
 The implementation history and acceptance contract are in [COMPOSER_PLAN.md](COMPOSER_PLAN.md).
+
+## Releases
+
+Version each plugin independently. Bump the patch for fixes and the minor for
+features or breaking changes while the plugin is pre-1.0. Keep the versions in
+`herdr-plugin.toml`, `Cargo.toml`, and Composer's `Cargo.lock` entry equal.
+Run the checks above, rebuild with `bash build-composer.sh`, and commit the release.
+Tag that commit as `vX.Y.Z` and push the branch and tag together:
+
+```sh
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push --atomic origin main vX.Y.Z
+```
+
+Install a tagged release with `herdr plugin install danieljvdm/herdr-composer --ref vX.Y.Z`.
+Re-run install with the next tag to upgrade a GitHub-managed installation.
+Local links use the working checkout and require a rebuild after source changes.
+Never move a published release tag.

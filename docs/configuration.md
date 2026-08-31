@@ -38,7 +38,8 @@ Branch and base overrides require worktree mode; clear saved overrides or switch
 back before launching. Tab cleanup closes its recorded tab without removing Git
 worktrees or changing branches.
 
-Each agent selects exactly one source:
+Codex uses local model discovery by default. Other agents default to the curated
+catalog. An explicit `catalog` setting overrides this choice:
 
 | `catalog` | Source |
 | --- | --- |

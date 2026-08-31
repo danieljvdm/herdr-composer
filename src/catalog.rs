@@ -9,9 +9,6 @@ use std::{
 fn yes() -> bool {
     true
 }
-fn curated() -> String {
-    "curated".into()
-}
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(from = "ModelWire")]
 pub struct Model {
@@ -111,7 +108,7 @@ impl Default for Agent {
             order: 0,
             enabled: yes(),
             visible: yes(),
-            catalog: curated(),
+            catalog: String::new(),
             command: vec![],
             allow_custom_model: false,
             default_model: String::new(),
@@ -194,6 +191,14 @@ impl Catalog {
             }
             if a.label.is_empty() {
                 a.label = id.clone();
+            }
+            if a.catalog.is_empty() {
+                a.catalog = if a.kind == "codex" {
+                    "discovery"
+                } else {
+                    "curated"
+                }
+                .into();
             }
             validate(&a.models, false)?;
             let source = if !discover {

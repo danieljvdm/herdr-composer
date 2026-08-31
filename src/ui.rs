@@ -200,7 +200,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         );
     }
 
-    frame.render_widget(Block::default().style(style(INK, PANEL)), settings);
     if wide {
         frame.render_widget(
             Block::default()
@@ -423,7 +422,7 @@ fn draw_image_view(frame: &mut Frame, app: &mut App) {
 
 fn draw_field(frame: &mut Frame, app: &mut App, field: Field, rect: Rect) {
     let selected = app.focused == field && app.picker.is_none();
-    let bg = if selected { SELECT } else { PANEL };
+    let bg = if selected { SELECT } else { BG };
     frame.render_widget(Block::default().style(style(INK, bg)), rect);
     if matches!(field, Field::Follow | Field::More) {
         text(

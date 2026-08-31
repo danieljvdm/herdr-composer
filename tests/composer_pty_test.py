@@ -10,6 +10,11 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
         shutil.copy(root/'tests/fixture_tool.py',bin/name);(bin/name).chmod(0o755)
     for name in ['git','python3']:(bin/name).symlink_to(shutil.which(name))
     (config/'config.toml').write_text('[defaults]\nlaunch_mode="tab"\nagent="codex"\n[agents.codex]\n[[agents.codex.models]]\nid="fixture"\nlabel="Configured model"\nefforts=["low","deep"]\n[branch_naming]\nenabled=true\nmodel="fixture-namer"\n')
+    # Use an isolated catalog and wait for its displayed diagnostic before input.
+    # A partial first frame is visible before asynchronous discovery completes.
+    catalog_command=['python3','-c','import sys; print(\'{"version":1,"models":[]}\'); print("CATALOG_READY", file=sys.stderr)']
+    settings=(config/'config.toml').read_text().replace('[agents.codex]\n','[agents.codex]\ncatalog="command"\ncommand='+json.dumps(catalog_command)+'\n')
+    (config/'config.toml').write_text(settings)
     env=dict(os.environ,TERM='xterm-256color',PATH=str(bin),COMPOSER_CONFIG_DIR=str(config),COMPOSER_STATE_DIR=str(tmp/'state'),HERDR_SOCKET_PATH=str(tmp/'socket'),HERDR_BIN_PATH=str(bin/'herdr'),FIXTURE_ROOT=str(tmp))
     for key in ['HERDR_PLUGIN_CONFIG_DIR','HERDR_PLUGIN_STATE_DIR','HERDR_ENV','HERDR_PANE_ID','COMPOSER_INVOKING_CHECKOUT']:env.pop(key,None)
     def start(remote=False):
@@ -22,9 +27,9 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
             os.execve(str(binary),[str(binary)],childenv)
         fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',32,110,0,0))
         data=b'';deadline=time.monotonic()+5
-        while b'What should the agent work on?' not in data and time.monotonic()<deadline:
+        while b'CATALOG_READY' not in data and time.monotonic()<deadline:
             if select.select([fd],[],[],.1)[0]:data+=os.read(fd,65536)
-        assert b'What should the agent work on?' in data,repr(data[-1000:]);time.sleep(.25)
+        assert b'CATALOG_READY' in data,repr(data[-1000:])
         return pid,fd
     def finish(pid,fd):
         deadline=time.monotonic()+8;data=b''
