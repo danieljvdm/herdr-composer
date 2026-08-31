@@ -94,6 +94,8 @@ pub struct TaskRequest {
     #[serde(default)]
     pub tab_checkout: Option<PathBuf>,
     pub branch: String,
+    #[serde(default)]
+    pub branch_naming: Option<crate::config::BranchNaming>,
     pub base_commit: Option<String>,
     pub agent: String,
     pub kind: String,
@@ -355,7 +357,7 @@ pub fn resolve(
         diagnostics.push("Prose resolver branch suggestion ignored".into());
         suggestion.branch.clear();
     }
-    let mut branch = if launch_mode == LaunchMode::Tab {
+    let branch = if launch_mode == LaunchMode::Tab {
         process::git(&selected, &["symbolic-ref", "--short", "HEAD"]).unwrap_or_default()
     } else {
         let branch = choose(&[&d.branch, &inline.branch, &suggestion.branch]);
@@ -505,32 +507,13 @@ pub fn resolve(
                 .map_err(Into::into)
         })
         .collect::<Result<Vec<_>>>()?;
-    if launch_mode == LaunchMode::Worktree
+    let branch_naming = (launch_mode == LaunchMode::Worktree
         && c.branch_naming.enabled
         && !task.trim().is_empty()
         && d.branch.is_empty()
         && inline.branch.is_empty()
-        && suggestion.branch.is_empty()
-    {
-        match crate::branch_name::generate(&c.branch_naming, &task) {
-            Ok(name) => {
-                if process::git(
-                    &repository,
-                    &["show-ref", "--verify", &format!("refs/heads/{name}")],
-                )
-                .is_ok()
-                {
-                    diagnostics
-                        .push("Generated branch already exists; using a unique task name".into());
-                } else {
-                    branch = name;
-                }
-            }
-            Err(e) => diagnostics.push(format!(
-                "Branch naming failed: {e}; using a unique task name"
-            )),
-        }
-    }
+        && suggestion.branch.is_empty())
+    .then(|| c.branch_naming.clone());
     Ok(TaskRequest {
         version: VERSION,
         launch_id: id,
@@ -542,6 +525,7 @@ pub fn resolve(
         launch_mode,
         tab_checkout: (launch_mode == LaunchMode::Tab).then_some(selected),
         branch,
+        branch_naming,
         base_commit,
         agent,
         kind: a.kind,

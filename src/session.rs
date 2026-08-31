@@ -599,6 +599,41 @@ fn validate_binding(r: &SessionRecord) -> Result<()> {
     }
     Ok(())
 }
+fn name_branch(state: &Path, record: &mut SessionRecord) -> Result<()> {
+    let request = record.request.as_ref().ok_or("missing task request")?;
+    let Some(config) = request.branch_naming.clone() else {
+        return Ok(());
+    };
+    let task = request.task.clone();
+    // Persist the attempt before calling the model. An interrupted runner must
+    // not silently replay a paid naming call or change a prepared branch.
+    record.step = "naming_branch".into();
+    save(state, record)?;
+    let result = crate::branch_name::generate(&config, &task);
+    let request = record.request.as_mut().unwrap();
+    match result {
+        Ok(name) => {
+            if process::git(
+                &request.repository,
+                &["show-ref", "--verify", &format!("refs/heads/{name}")],
+            )
+            .is_ok()
+            {
+                request
+                    .diagnostics
+                    .push("Generated branch already exists; using a unique task name".into());
+            } else {
+                request.branch = name;
+            }
+        }
+        Err(e) => request.diagnostics.push(format!(
+            "Branch naming failed: {e}; using a unique task name"
+        )),
+    }
+    record.step = "branch_named".into();
+    save(state, record)
+}
+
 pub fn run(state: &Path, id: &str) -> Result<()> {
     let _lock = storage::lock(&path(state, id)?.with_extension("lock"))?;
     let mut r = load(state, id)?;
@@ -611,12 +646,13 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         .into());
     }
     println!("Preparing session {id}");
-    if let Some(req) = &r.request {
-        for diagnostic in &req.diagnostics {
-            println!("{diagnostic}");
-        }
-    }
     let result = (|| -> Result<()> {
+        name_branch(state, &mut r)?;
+        if let Some(req) = &r.request {
+            for diagnostic in &req.diagnostics {
+                println!("{diagnostic}");
+            }
+        }
         prepare(state, &mut r)?;
         let req = r.request.as_ref().unwrap().clone();
         let receipt = r.receipt.as_ref().unwrap();

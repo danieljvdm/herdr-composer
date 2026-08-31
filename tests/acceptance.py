@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     # Native path works without Worktrunk, fzf, jq, or gh on PATH.
     (root/'bin/wt').unlink()
     path,id=launch(root,repo,env)
-    old=json.loads(path.read_text());saved_config=(root/'config/config.toml').read_text();(root/'config/config.toml').write_text('[agents.codex]\nenabled=false\n');run(['__run',id],env,repo);(root/'config/config.toml').write_text(saved_config)
+    old=json.loads(path.read_text());old['request'].pop('branch_naming');path.write_text(json.dumps(old));saved_config=(root/'config/config.toml').read_text();(root/'config/config.toml').write_text('[agents.codex]\nenabled=false\n');run(['__run',id],env,repo);(root/'config/config.toml').write_text(saved_config)
     record=json.loads(path.read_text());assert record['delivery']=='Confirmed';assert json.loads((root/'prompt.json').read_text())==record['request']['task']
     assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
     run(['__run',id],env,repo,ok=False)
@@ -140,6 +140,13 @@ with tempfile.TemporaryDirectory(prefix='composer-naming-') as tmp:
     def naming_calls():return [args for program,args in calls(root) if program=='codex' and args[:1]==['exec']]
     literal='Fix `login`\n$(touch never)\n日本語\n'
     path,id=launch(root,repo,env,task=literal);record=json.loads(path.read_text())
+    assert record['step']=='queued' and record['request']['branch'].startswith('task-')
+    assert not naming_calls(),'launch must hand off before starting the naming model'
+    assert record['request']['branch_naming']['model']=='fixture-namer'
+    # The runner uses submitted settings even if config changes after handoff.
+    (root/'config/config.toml').write_text(naming_config.replace('fixture-namer','changed-model').replace('prefix="test/"','prefix="changed/"'))
+    run(['__run',id],env,repo);record=json.loads(path.read_text())
+    (root/'config/config.toml').write_text(naming_config)
     assert record['request']['branch']=='test/fix-login-redirect'
     assert json.loads((root/'naming-input.json').read_text())=={'task':literal}
     args=naming_calls()[-1];assert args[args.index('--model')+1]=='fixture-namer'
@@ -147,19 +154,26 @@ with tempfile.TemporaryDirectory(prefix='composer-naming-') as tmp:
     assert '--ephemeral' in args and args[args.index('--sandbox')+1]=='read-only'
     assert literal not in ' '.join(args)
     assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
-    run(['__run',id],env,repo)
+    assert len(naming_calls())==1
+    run(['__run',id],env,repo,ok=False)
+    assert len(naming_calls())==1,'duplicate runners must not repeat naming'
     # A generated name that already exists falls back without failing the task.
-    path,id=launch(root,repo,env);r=json.loads(path.read_text())['request'];assert r['branch'].startswith('task-') and r['diagnostics']
+    path,id=launch(root,repo,env);run(['__run',id],env,repo);r=json.loads(path.read_text())['request'];assert r['branch'].startswith('task-') and r['diagnostics']
     before=len(naming_calls())
     path,id=launch(root,repo,env,extra=['--branch','manual-name']);assert json.loads(path.read_text())['request']['branch']=='manual-name'
+    assert json.loads(path.read_text())['request']['branch_naming'] is None
+    run(['__run',id],env,repo)
     run(['launch','branch:inline-name Fix login'],env,repo)
     path,id=launch(root,repo,env,extra=['--launch-mode','tab']);assert json.loads(path.read_text())['request']['branch']=='main'
+    assert json.loads(path.read_text())['request']['branch_naming'] is None
+    run(['__run',id],env,repo)
     run(['launch','--model','invalid','task'],env,repo,ok=False)
     assert len(naming_calls())==before,'explicit branches, tab mode, and invalid requests must skip naming'
     for extra_env in [{'FIXTURE_BRANCH_NAME':'../invalid'},{'FIXTURE_NAMING_FAIL':'1'},{'FIXTURE_NAMING_EMPTY':'1'}]:
-        path,id=launch(root,repo,dict(env,**extra_env));r=json.loads(path.read_text())['request']
+        path,id=launch(root,repo,env);run(['__run',id],dict(env,**extra_env),repo);r=json.loads(path.read_text())['request']
         assert r['branch'].startswith('task-') and any('Branch naming failed' in d for d in r['diagnostics'])
     (root/'config/config.toml').write_text(naming_config.replace('enabled=true','enabled=false'))
     before=len(naming_calls());path,id=launch(root,repo,env);assert len(naming_calls())==before
+    run(['__run',id],env,repo);assert len(naming_calls())==before
     assert json.loads(path.read_text())['request']['branch'].startswith('task-')
-print('Branch naming passed: separate model settings, literal input, precedence, collision/failure fallback, disabled mode.')
+print('Branch naming passed: immediate handoff, frozen settings, one naming call, literal input, precedence, collision/failure fallback, disabled mode.')

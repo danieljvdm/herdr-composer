@@ -80,6 +80,8 @@ for all options.
 To generate branch names with a separate model, enable
 [`branch_naming`](docs/configuration.md#branch-naming). Its model, effort, speed,
 and prefix are configurable. Explicit branch names always take precedence.
+Naming runs in the background after handoff, so the editor closes without
+waiting for the model.
 
 ## Native worktrees or Worktrunk
 

@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     for name in ['herdr','wt','codex']:
         shutil.copy(root/'tests/fixture_tool.py',bin/name);(bin/name).chmod(0o755)
     for name in ['git','python3']:(bin/name).symlink_to(shutil.which(name))
-    (config/'config.toml').write_text('[defaults]\nlaunch_mode="tab"\nagent="codex"\n[agents.codex]\n[[agents.codex.models]]\nid="fixture"\nlabel="Configured model"\nefforts=["low","deep"]\n')
+    (config/'config.toml').write_text('[defaults]\nlaunch_mode="tab"\nagent="codex"\n[agents.codex]\n[[agents.codex.models]]\nid="fixture"\nlabel="Configured model"\nefforts=["low","deep"]\n[branch_naming]\nenabled=true\nmodel="fixture-namer"\n')
     env=dict(os.environ,TERM='xterm-256color',PATH=str(bin),COMPOSER_CONFIG_DIR=str(config),COMPOSER_STATE_DIR=str(tmp/'state'),HERDR_SOCKET_PATH=str(tmp/'socket'),HERDR_BIN_PATH=str(bin/'herdr'),FIXTURE_ROOT=str(tmp))
     for key in ['HERDR_PLUGIN_CONFIG_DIR','HERDR_PLUGIN_STATE_DIR','HERDR_ENV','HERDR_PANE_ID','COMPOSER_INVOKING_CHECKOUT']:env.pop(key,None)
     def start(remote=False):
@@ -53,7 +53,10 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     send(fd,b'\x1b');finish(pid,fd)
     saved=draft();assert saved['launch_mode']=='worktree';assert saved['task']==task;assert saved['provider']=='worktrunk';assert saved['agent']=='codex';assert saved['model']=='fixture'
     pid,fd=start();send(fd,b'\x13');finish(pid,fd)
-    assert draft()['task']==task,'queued tasks must retain their draft';deliver();assert draft()['task']==''
+    assert draft()['task']==task,'queued tasks must retain their draft'
+    calls=[json.loads(line) for line in (tmp/'calls.jsonl').read_text().splitlines()]
+    assert not any(program=='codex' and args[:1]==['exec'] for program,args in calls),'editor must close before naming runs'
+    deliver();assert draft()['task']==''
     def png():
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
         return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',2,2,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\0'+b'\xff\0\0'*2+b'\0'+b'\0\xff\0'*2))+chunk(b'IEND',b'')
