@@ -6,12 +6,20 @@ holds an exclusive record lock. Duplicate runners report state instead of
 replaying. Closing the editor cannot stop setup.
 
 Records distinguish NotSent, Unknown, and Confirmed delivery. Herdr startup runs
-once and waits for readiness. The prompt runs once with a bounded lifecycle
+once and waits for readiness. For Codex, Composer also requires Herdr's positive
+idle detection evidence, rather than its fallback idle state during startup.
+Startup has a five-minute budget. If Codex shows a trust or other startup dialog,
+resolve it in the task pane; Composer keeps the task pending and continues when
+Codex is ready. It never answers the dialog itself. The prompt runs once with a bounded lifecycle
 wait. A delivery-attempt marker precedes input. Only `agent_prompted` confirms
 delivery and clears the submitted draft revision. `agent_blocked` rejects input;
 stalls, timeouts, and lost responses remain Unknown. The record keeps the
 structured response. Settings are reported as requested, without footer
 scraping or an unsupported claim that runtime settings were verified.
+
+After confirmed delivery and draft cleanup, the runner closes its preparation
+pane. Failures leave it open for inspection. Closing this pane does not close
+the task's pane or other panes added to the preparation tab.
 
 On failure, open the workspace named in the record and inspect its runner/agent.
 For an approval dialog, resolve it yourself. For Unknown delivery, inspect

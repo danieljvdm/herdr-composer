@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fake external tools with real disposable Git worktrees and durable call logs."""
-import json, os, pathlib, subprocess, sys, time
+import fcntl, json, os, pathlib, subprocess, sys, time
 
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
 state_path=root/'herdr.json'
@@ -59,6 +59,18 @@ try:
             if os.environ.get('FIXTURE_CLOSE_FAIL'): raise RuntimeError('close failed')
             state['tabs']=[t for t in state['tabs'] if t['tab_id']!=args[2]];emit({'type':'tab_closed'})
         elif command==['pane','run']: emit({'type':'pane_input_sent'})
+        elif command==['pane','close']:
+            # A runner can be killed by its own close request. Check durable
+            # success and unlocked state at that boundary, not after return.
+            record=next(json.loads(p.read_text()) for p in (root/'state/sessions').glob('*.json') if json.loads(p.read_text()).get('runner_pane')==args[2])
+            assert record['step']=='delivered' and record['delivery']=='Confirmed'
+            if record['draft']:
+                draft=json.loads(pathlib.Path(record['draft'][0]).read_text())
+                assert draft['revision']>record['draft'][1]
+            with (root/'state/sessions'/f"{record['id']}.lock").open() as lock:
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            if os.environ.get('FIXTURE_CLOSE_FAIL'): raise RuntimeError('close failed')
+            state['tabs']=[t for t in state['tabs'] if t['pane_id']!=args[2]];emit({'type':'pane_closed'})
         elif command==['worktree','create']:
             repo=pathlib.Path(next(w['worktree']['repo_root'] for w in state['workspaces'] if w['workspace_id']==flag('--workspace')));target=prepare(repo,flag('--branch'),flag('--base'))
             v=workspace(target,repo);v['worktree']={'path':str(target)};v['type']='worktree_created';emit(v)
@@ -76,8 +88,25 @@ try:
         elif command==['agent','list']: emit({'agents':[]})
         elif command==['agent','start']:
             if os.environ.get('FIXTURE_START_FAIL'): raise RuntimeError('agent failed to become ready')
-            emit({'type':'agent_started','agent':{'pane_id':flag('--pane'),'agent':'codex','name':args[2]},'argv':args})
+            state['agent']={'pane_id':flag('--pane'),'agent':'codex','name':args[2],'interactive_ready':True}
+            state['readiness_polls']=0
+            if os.environ.get('FIXTURE_START_BLOCKED'):
+                state_path.write_text(json.dumps(state));print(json.dumps({'error':{'code':'agent_not_ready'}}),file=sys.stderr);sys.exit(1)
+            emit({'type':'agent_started','agent':state['agent'],'argv':args})
+        elif command==['agent','get']:
+            agent=dict(state['agent'])
+            if os.environ.get('FIXTURE_IDENTITY_CHANGED'):agent['name']='replacement'
+            emit({'type':'agent_info','agent':agent})
+        elif command==['agent','explain']:
+            state['readiness_polls']+=1
+            poll=state['readiness_polls']
+            # A false idle is followed by a trust dialog. Only after the user
+            # resolves it does positive idle evidence permit the task.
+            result={'agent':'codex','state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3}
+            if os.environ.get('FIXTURE_READY_INVALID'):result.pop('visible_idle')
+            state_path.write_text(json.dumps(state));print(json.dumps(result))
         elif command==['agent','prompt']:
+            assert state['readiness_polls']>=3,'task sent into startup or a trust dialog'
             if os.environ.get('FIXTURE_PROMPT_FAIL'):
                 print(json.dumps({'error':{'code':os.environ['FIXTURE_PROMPT_FAIL']}}),file=sys.stderr);sys.exit(1)
             (root/'prompt.json').write_text(json.dumps(args[3]));emit({'type':'agent_prompted','agent':{'pane_id':args[2],'agent_status':'working'}})
