@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -634,8 +634,44 @@ fn name_branch(state: &Path, record: &mut SessionRecord) -> Result<()> {
     save(state, record)
 }
 
+fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) -> Result<()> {
+    let mut reported_blocker = false;
+    loop {
+        let live = h.call(&["agent", "get", name])?;
+        let agent = &live["result"]["agent"];
+        if agent["pane_id"] != pane || agent["agent"] != "codex" || agent["name"] != name {
+            return Err("Codex startup identity changed; task has not been sent".into());
+        }
+        // Herdr 0.8.2's startup check accepts fallback idle before Codex renders
+        // its trust dialog. Positive idle evidence distinguishes the actual
+        // input state without sending text or Enter into a startup dialog.
+        let detection = h.call(&["agent", "explain", name, "--json"])?;
+        if detection["agent"] != "codex" || !detection["visible_idle"].is_boolean() {
+            return Err(
+                "Herdr did not return Codex readiness evidence; task has not been sent".into(),
+            );
+        }
+        if detection["state"] == "idle"
+            && detection["visible_idle"] == true
+            && agent["interactive_ready"] == true
+        {
+            return Ok(());
+        }
+        if !reported_blocker
+            && (detection["state"] == "blocked" || agent["agent_status"] == "blocked")
+        {
+            println!("Codex requires input in pane {pane}. Resolve its startup dialog to continue; the task has not been sent.");
+            reported_blocker = true;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("Codex is not ready for task input in pane {pane}; task has not been sent. Inspect its startup dialog").into());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 pub fn run(state: &Path, id: &str) -> Result<()> {
-    let _lock = storage::lock(&path(state, id)?.with_extension("lock"))?;
+    let lock = storage::lock(&path(state, id)?.with_extension("lock"))?;
     let mut r = load(state, id)?;
     if r.step != "queued" || r.error.is_some() {
         return Err(format!(
@@ -690,8 +726,22 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         }
         r.step = "starting_agent".into();
         save(state, &r)?;
-        let started = r.herdr.call(&args)?;
-        if started.pointer("/result/type").and_then(Value::as_str) != Some("agent_started") {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let output = r.herdr.output(&args)?;
+        let startup_blocked = req.kind == "codex"
+            && !output.success
+            && serde_json::from_str::<Value>(&output.stderr)
+                .is_ok_and(|v| v["error"]["code"] == "agent_not_ready");
+        let started = if startup_blocked {
+            // The named process is still alive. Wait for the user to resolve
+            // its dialog, without restarting it or submitting the task.
+            r.herdr.call(&["agent", "get", &name])?
+        } else {
+            output.json()?
+        };
+        if !startup_blocked
+            && started.pointer("/result/type").and_then(Value::as_str) != Some("agent_started")
+        {
             return Err("Herdr did not confirm agent startup".into());
         }
         r.agent = Some(started["result"]["agent"].clone());
@@ -702,6 +752,10 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         }
         r.step = "agent_started".into();
         save(state, &r)?;
+        if req.kind == "codex" {
+            println!("Waiting for Codex input readiness in pane {pane}; resolve any startup dialogs there.");
+            wait_for_codex_input(&r.herdr, &name, &pane, deadline)?;
+        }
         let mut prompt = req.task.clone();
         if !req.attachments.is_empty() {
             prompt.push_str("\n\nAttached images (retained originals):\n");
@@ -772,6 +826,15 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             path(state, id)?.display()
         )
         .into());
+    }
+    // Closing the runner's pane can terminate this process before the command
+    // returns. Delivery and draft cleanup must be durable, and the record lock
+    // released, before asking Herdr to close it.
+    drop(lock);
+    if let Some(pane) = &r.runner_pane {
+        r.herdr.call(&["pane", "close", pane]).map_err(|e| {
+            format!("Session {id} delivered, but preparation pane {pane} could not close: {e}")
+        })?;
     }
     Ok(())
 }

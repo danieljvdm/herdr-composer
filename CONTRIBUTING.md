@@ -39,7 +39,10 @@ python3 tests/live_integration.py --socket /path/to/test-session/herdr.sock
 ```
 
 This test starts real Codex agents and leaves its source repositories under the
-system temporary directory for inspection. It exercises both providers,
+system temporary directory for inspection. It explicitly approves Codex's trust
+dialog only for the empty repository it creates, checking that Composer has not
+sent the task into that dialog. It requires an actual agent reply and checks
+that the preparation pane closes while the task pane stays open. It exercises both providers,
 checks dirty-checkout refusal and unmerged-branch retention, and removes the
 task checkouts. Stop the named test session when finished.
 

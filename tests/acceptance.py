@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     path,id=launch(root,repo,env)
     old=json.loads(path.read_text());old['request'].pop('branch_naming');path.write_text(json.dumps(old));saved_config=(root/'config/config.toml').read_text();(root/'config/config.toml').write_text('[agents.codex]\nenabled=false\n');run(['__run',id],env,repo);(root/'config/config.toml').write_text(saved_config)
     record=json.loads(path.read_text());assert record['delivery']=='Confirmed';assert json.loads((root/'prompt.json').read_text())==record['request']['task']
+    assert not any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
+    assert any(t['pane_id']==record['receipt']['pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
     assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
     run(['__run',id],env,repo,ok=False)
     assert len([c for c in calls(root) if c[1][:2]==['agent','prompt']])==1
@@ -78,9 +80,26 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     path,id=launch(root,repo,env,'worktrunk');before=len(calls(root));run(['__run',id],dict(env,FIXTURE_HOOK_FAIL='1'),repo,ok=False)
     assert not any(c[1][:2]==['agent','start'] for c in calls(root)[before:]);assert json.loads(path.read_text())['receipt'];run(['remove','--session',id],env,repo)
     # Delivery failure is never treated as confirmed and never automatically resent.
+    # A startup dialog can be resolved without restarting the named agent.
+    path,id=launch(root,repo,env);before=len(calls(root))
+    run(['__run',id],dict(env,FIXTURE_START_BLOCKED='1'),repo)
+    assert json.loads(path.read_text())['delivery']=='Confirmed'
+    assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','start']])==1
+    for condition in ['FIXTURE_IDENTITY_CHANGED','FIXTURE_READY_INVALID']:
+        path,id=launch(root,repo,env);before=len(calls(root))
+        run(['__run',id],dict(env,**{condition:'1'}),repo,ok=False)
+        record=json.loads(path.read_text());assert record['delivery']=='NotSent' and record['error']
+        assert not any(c[1][:2] in [['agent','prompt'],['pane','close']] for c in calls(root)[before:])
     for code,expected in [('agent_blocked','NotSent'),('agent_prompt_stalled','Unknown'),('timeout','Unknown')]:
         path,id=launch(root,repo,env);run(['__run',id],dict(env,FIXTURE_PROMPT_FAIL=code),repo,ok=False)
-        assert json.loads(path.read_text())['delivery']==expected;run(['__run',id],env,repo,ok=False);run(['remove','--session',id],env,repo)
+        record=json.loads(path.read_text());assert record['delivery']==expected
+        assert any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
+        run(['__run',id],env,repo,ok=False);run(['remove','--session',id],env,repo)
+    # Failed runner closure cannot replay delivery or leave a stale record lock.
+    path,id=launch(root,repo,env);run(['__run',id],dict(env,FIXTURE_CLOSE_FAIL='1'),repo,ok=False)
+    record=json.loads(path.read_text());assert record['step']=='delivered' and record['delivery']=='Confirmed'
+    before=len(calls(root));run(['__run',id],env,repo,ok=False)
+    assert not any(c[1][:2]==['agent','prompt'] for c in calls(root)[before:])
     # Configured executable uses the same receipt and pinned argv on removal.
     with (root/'config/config.toml').open('a') as f:f.write('\n[providers.fixture]\ncommand = '+json.dumps([shutil.which('python3'),str(ROOT/'examples/provider.py')])+'\n')
     path,id=launch(root,repo,env,'fixture');run(['__run',id],env,repo);record=json.loads(path.read_text());assert record['receipt']['owned']
@@ -113,6 +132,8 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     for text in ['Review one','Review two']:
         before=len(calls(root));path,id=launch(root,repo,env,provider=None,task=text);run(['__run',id],env,repo)
         record=json.loads(path.read_text());receipt=record['receipt'];tab_records.append((path,id,receipt))
+        assert not any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
+        assert any(t['tab_id']==receipt['tab'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
         assert record['request']['launch_mode']=='tab' and receipt['owned'] is False
         assert pathlib.Path(receipt['checkout'])==repo.resolve() and receipt['tab']
         assert not any(c[0]=='wt' or c[1][:2] in [['worktree','create'],['worktree','open']] for c in calls(root)[before:])

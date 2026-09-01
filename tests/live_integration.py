@@ -23,12 +23,35 @@ for provider in options.providers:
     print(output,flush=True)
     path=max((root/'state/sessions').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
     deadline=time.monotonic()+340
+    approved_test_repo=False
     while time.monotonic()<deadline:
         record=json.loads(path.read_text())
         if record['error'] or record['step']=='delivered':break
+        if record['receipt'] and record['receipt']['pane'] and not approved_test_repo:
+            pane=record['receipt']['pane']
+            screen=command(['herdr','pane','read',pane,'--source','visible'],env=env)
+            if 'Do you trust the contents of this directory?' in screen:
+                # This test owns the empty repository. Emulate its user's
+                # deliberate trust choice; production Composer never does this.
+                assert record['delivery']=='NotSent'
+                time.sleep(1)
+                assert json.loads(path.read_text())['delivery']=='NotSent','task sent into trust dialog'
+                command(['herdr','agent','send-keys',pane,'enter'],env=env)
+                approved_test_repo=True
+                print('Approved the disposable test repository; task was still NotSent.',flush=True)
         time.sleep(.25)
     print(provider,json.dumps(record,indent=2),flush=True)
     if record['step']!='delivered':raise RuntimeError('live delivery failed; retained resources at '+str(path))
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        panes=json.loads(command(['herdr','pane','list'],env=env))['result']['panes']
+        if all(p['pane_id']!=record['runner_pane'] for p in panes):break
+        time.sleep(.1)
+    assert all(p['pane_id']!=record['runner_pane'] for p in panes),'preparation pane survived successful delivery'
+    assert any(p['pane_id']==record['receipt']['pane'] for p in panes),'task pane was closed'
+    # A lifecycle transition can come from startup rather than the submitted
+    # task. Require the actual answer, not just Herdr's delivery acknowledgement.
+    command(['herdr','pane','wait-output',record['receipt']['pane'],'--regex',r'^\s*[•]?\s*COMPOSER_INTEGRATION_OK\s*$', '--timeout','60000'],env=env)
     target=pathlib.Path(record['receipt']['checkout'])
     (target/'unmerged-test.txt').write_text('Retain this branch after removing the checkout.\n')
     refusal=subprocess.run([str(binary),'remove','--session',record['id']],cwd=repo,env=env,text=True,capture_output=True)
