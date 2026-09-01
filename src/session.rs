@@ -710,6 +710,9 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
                 prompt.push('\n');
             }
         }
+        if req.kind == "codex" && !prompt.ends_with(char::is_whitespace) {
+            prompt.push('\n');
+        }
         r.step = "delivery_attempted".into();
         r.delivery = Delivery::Unknown;
         save(state, &r)?;

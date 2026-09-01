@@ -13,6 +13,11 @@ stalls, timeouts, and lost responses remain Unknown. The record keeps the
 structured response. Settings are reported as requested, without footer
 scraping or an unsupported claim that runtime settings were verified.
 
+Codex input gets a trailing newline when it does not already end in whitespace.
+This keeps a final skill or file mention from opening a completion menu that
+consumes Herdr's Enter key without submitting. The saved task remains unchanged;
+Composer still makes only one prompt attempt.
+
 On failure, open the workspace named in the record and inspect its runner/agent.
 For an approval dialog, resolve it yourself. For Unknown delivery, inspect
 before manually sending the task. Composer has no automatic resume, resend, or

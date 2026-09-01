@@ -40,6 +40,17 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
     run(['__run',id],env,repo,ok=False)
     assert len([c for c in calls(root) if c[1][:2]==['agent','prompt']])==1
+    for task in ['Review this task\n\n$orchestrate', 'Review @README.md', 'Keep trailing space ', 'Keep trailing newline\n']:
+        mention_path,mention_id=launch(root,repo,env,task=task)
+        before=len(calls(root));run(['__run',mention_id],env,repo)
+        mention_record=json.loads(mention_path.read_text())
+        assert mention_record['request']['task']==task
+        assert mention_record['delivery']=='Confirmed'
+        expected=task if task[-1].isspace() else task+'\n'
+        assert json.loads((root/'prompt.json').read_text())==expected
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
+        assert not any(c[1][:2]==['agent','send-keys'] for c in calls(root)[before:])
+        run(['remove','--session',mention_id],env,repo)
     # Focus/default changes cannot redirect recorded cleanup; dirty Git refuses.
     checkout=pathlib.Path(record['receipt']['checkout']);(checkout/'pending').write_text('keep')
     run(['remove','--session',id],env,repo,ok=False);assert (checkout/'pending').read_text()=='keep'
