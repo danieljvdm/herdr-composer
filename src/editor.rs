@@ -131,18 +131,15 @@ pub fn run(paths: &Paths) -> Result<()> {
             // Keep checking the PTY size in case a resize signal is coalesced
             // during startup. An idle text editor need not emit terminal bytes.
             let size = terminal.size()?;
-            if redraw
-                || size != terminal_size
-                || (app.graphics.is_some() && !app.previews.is_empty())
-            {
+            if redraw || size != terminal_size {
                 terminal.draw(|frame| ui::draw(frame, &mut app))?;
                 terminal_size = size;
                 redraw = false;
             }
             if let Some(graphics) = &mut app.graphics {
-                graphics.sync(
+                redraw |= graphics.sync(
                     &app.image_placements,
-                    &mut app.previews,
+                    &app.previews,
                     &app.settings.attachments,
                 );
             }

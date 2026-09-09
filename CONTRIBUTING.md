@@ -27,9 +27,11 @@ python3 tests/sow_test.py
 ```
 
 The Rust tests cover request resolution, catalogs, draft conflicts, image import,
-layout, and graphics stream cleanup. The graphics test needs local Unix-socket
-permission. Python tests use disposable Git repositories, fake external tools,
-and a real PTY. They do not launch real agents or alter the desktop clipboard.
+layout, and graphics stream cleanup. The Rust graphics test and Python PTY test
+need local Unix-socket permission. Python tests use disposable Git repositories,
+fake external tools, and a real PTY. They do not launch real agents or alter the
+desktop clipboard. The PTY test also checks typing during a stalled graphics
+request, idle output with an attachment, and image-stream cleanup.
 
 For changes to Herdr or Worktrunk integration, start a disposable named Herdr
 session and pass its socket to the live test:

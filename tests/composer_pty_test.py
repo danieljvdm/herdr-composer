@@ -113,4 +113,60 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     pid,fd=start();send(fd,b'\x13');finish(pid,fd);deliver()
     latest=max((tmp/'state/sessions').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
     receipt=json.loads(latest.read_text())['receipt'];assert receipt['owned'] is False and receipt['tab'];assert Path(receipt['checkout'])==repo.resolve()
-print('PTY passed: launch-mode toggle and restoration, provider/catalog selection, literal editing, draft recovery, image-only tasks, preview, remote/local import, retained originals.')
+    # A real image stream with a deliberately stalled metadata response must
+    # not block typing. All sockets and image bytes belong to this fixture.
+    import queue,socket,threading
+    listener=socket.socket(socket.AF_UNIX);listener.bind(str(tmp/'socket'));listener.listen();listener.settimeout(3)
+    env.update(HERDR_ENV='1',HERDR_PANE_ID='w1:p1')
+    pid,fd=start(remote=True) # fork before starting the fixture thread
+    requested=threading.Event();release=threading.Event();closed=threading.Event()
+    frames=queue.Queue();errors=[]
+    def wait_graphics(predicate):
+        deadline=time.monotonic()+2
+        while not predicate() and time.monotonic()<deadline:collect(fd,.01)
+        assert predicate(),errors
+    def graphics_server():
+        try:
+            with listener:
+                conn,_=listener.accept()
+                with conn,conn.makefile('rb') as reader:
+                    assert json.loads(reader.readline())['method']=='pane.graphics.info'
+                    requested.set();assert release.wait(2)
+                    conn.sendall(b'{"result":{"cell_width_px":10,"cell_height_px":20}}\n')
+                conn,_=listener.accept()
+                with conn,conn.makefile('rb') as reader:
+                    conn.settimeout(3)
+                    assert json.loads(reader.readline())['method']=='pane.graphics.stream'
+                    conn.sendall(b'{"result":{"type":"ok"}}\n')
+                    while line:=reader.readline():
+                        header=json.loads(line)
+                        assert len(reader.read(header['data_length']))==header['data_length']
+                        frames.put(header)
+                closed.set()
+        except Exception as error:errors.append(error)
+    server=threading.Thread(target=graphics_server,daemon=True);server.start()
+    os.write(fd,b'\x1b[200~'+str(clipboard).encode()+b'\x1b[201~')
+    wait_graphics(requested.is_set)
+    try:
+        started=time.monotonic();os.write(fd,b'Z');expect_output(fd,b'Z')
+        assert time.monotonic()-started<.25, 'typing waited for the graphics API'
+    finally:release.set()
+    wait_graphics(lambda:not frames.empty());first=frames.get_nowait()
+    collect(fd,.3)
+    os.write(fd,b'Q');expect_output(fd,b'Q')
+    collect(fd,.6) # autosave and the pixel/fallback transition settle
+    assert collect(fd,.2)==b'', 'attached images must not trigger idle redraws'
+    assert frames.empty(), 'typing must not upload unchanged images'
+    # Several resizes can queue while graphics work is pending. The final
+    # placement must catch up, and removal must close the owned stream.
+    for cols in [100,90,120]:
+        fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',32,cols,0,0))
+    expect_output(fd,b'New task')
+    wait_graphics(lambda:not frames.empty());resized=frames.get_nowait()
+    assert resized['placement']!=first['placement']
+    send(fd,b'\x0a\x1b[3~')
+    wait_graphics(closed.is_set)
+    send(fd,b'\x1b');finish(pid,fd)
+    server.join(timeout=2);assert not server.is_alive() and not errors,errors
+    assert draft()['task']=='ZQ' and draft()['attachments']==[]
+print('PTY passed: editing, launch flows, draft recovery, retained images, responsive graphics, idle output, resize and image-stream cleanup.')

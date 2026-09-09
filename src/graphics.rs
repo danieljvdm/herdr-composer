@@ -9,6 +9,8 @@ use std::{
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
+    sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -21,6 +23,27 @@ struct Placed {
 }
 
 pub struct Graphics {
+    requests: SyncSender<Scene>,
+    updates: Receiver<Vec<Placement>>,
+    requested_placements: Vec<(usize, Rect)>,
+    requested_attachments: Vec<Attachment>,
+    placed: Vec<Placement>,
+}
+
+#[derive(Clone, PartialEq)]
+struct Placement {
+    index: usize,
+    path: String,
+    area: Rect,
+}
+
+struct Scene {
+    wanted: Vec<(usize, Rect)>,
+    previews: Vec<Preview>,
+    attachments: Vec<Attachment>,
+}
+
+struct Renderer {
     socket: PathBuf,
     pane: String,
     cell: Option<(u32, u32)>,
@@ -33,14 +56,103 @@ impl Graphics {
         if env::var("HERDR_ENV").ok().as_deref() != Some("1") {
             return None;
         }
-        Some(Self {
-            socket: env::var_os("HERDR_SOCKET_PATH")?.into(),
-            pane: env::var("HERDR_PANE_ID").ok()?,
-            cell: None,
-            checked: None,
-            placed: BTreeMap::new(),
-        })
+        Some(Self::new(
+            env::var_os("HERDR_SOCKET_PATH")?.into(),
+            env::var("HERDR_PANE_ID").ok()?,
+        ))
     }
+
+    fn new(socket: PathBuf, pane: String) -> Self {
+        // A stalled graphics service or upload must never hold up keyboard
+        // input. Keep at most one pending scene, and retry the newest layout
+        // from sync() if the worker is still busy with an older one.
+        let (requests, scenes) = mpsc::sync_channel::<Scene>(1);
+        let (updates, results) = mpsc::channel();
+        thread::spawn(move || {
+            let mut renderer = Renderer {
+                socket,
+                pane,
+                cell: None,
+                checked: None,
+                placed: BTreeMap::new(),
+            };
+            let mut scene: Option<Scene> = None;
+            let mut reported = vec![];
+            loop {
+                match scenes.recv_timeout(Duration::from_millis(100)) {
+                    Ok(next) => scene = Some(next),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+                let Some(scene) = &mut scene else { continue };
+                renderer.sync(&scene.wanted, &mut scene.previews, &scene.attachments);
+                let placed: Vec<_> = renderer
+                    .placed
+                    .iter()
+                    .map(|(&index, p)| Placement {
+                        index,
+                        path: p.path.clone(),
+                        area: p.area,
+                    })
+                    .collect();
+                if placed != reported {
+                    if updates.send(placed.clone()).is_err() {
+                        break;
+                    }
+                    reported = placed;
+                }
+            }
+        });
+        Self {
+            requests,
+            updates: results,
+            requested_placements: vec![],
+            requested_attachments: vec![],
+            placed: vec![],
+        }
+    }
+
+    pub fn active(&self) -> bool {
+        !self.placed.is_empty()
+    }
+
+    pub fn contains(&self, index: usize, path: &str, area: Rect) -> bool {
+        self.placed
+            .iter()
+            .any(|p| p.index == index && p.path == path && p.area == area)
+    }
+
+    /// Queue changed placements and collect completed work without doing I/O.
+    /// The return value requests a redraw when pixel/fallback visibility changes.
+    pub fn sync(
+        &mut self,
+        wanted: &[(usize, Rect)],
+        previews: &[Preview],
+        attachments: &[Attachment],
+    ) -> bool {
+        if self.requested_placements != wanted || self.requested_attachments != attachments {
+            let scene = Scene {
+                wanted: wanted.to_vec(),
+                // Decoded pixels are shared; encoding and upload caches belong
+                // to the worker, not the render/input thread.
+                previews: previews.to_vec(),
+                attachments: attachments.to_vec(),
+            };
+            if self.requests.try_send(scene).is_ok() {
+                self.requested_placements = wanted.to_vec();
+                self.requested_attachments = attachments.to_vec();
+            }
+        }
+        let Some(placed) = self.updates.try_iter().last() else {
+            return false;
+        };
+        let changed = self.placed != placed;
+        self.placed = placed;
+        changed
+    }
+}
+
+impl Renderer {
     fn request(&self, method: &str, mut params: Value) -> io::Result<(UnixStream, Value)> {
         params["pane_id"] = json!(self.pane);
         let mut stream = UnixStream::connect(&self.socket)?;
@@ -63,9 +175,6 @@ impl Graphics {
             .ok_or_else(|| io::Error::other("Missing Herdr response"))?;
         Ok((stream, result))
     }
-    pub fn active(&self) -> bool {
-        self.cell.is_some() && !self.placed.is_empty()
-    }
     pub fn contains(&self, index: usize, path: &str, area: Rect) -> bool {
         self.placed
             .get(&index)
@@ -77,7 +186,8 @@ impl Graphics {
         previews: &mut [Preview],
         attachments: &[Attachment],
     ) {
-        if wanted.is_empty() && self.placed.is_empty() {
+        if wanted.is_empty() {
+            self.placed.clear();
             return;
         }
         if self
@@ -115,7 +225,10 @@ impl Graphics {
             let Some(rect) = fit(area, preview.width, preview.height, cell) else {
                 continue;
             };
-            let Some((width, height, png)) = preview.png() else {
+            let Some((width, height, png)) = preview.png(
+                u32::from(rect.width).saturating_mul(cell.0),
+                u32::from(rect.height).saturating_mul(cell.1),
+            ) else {
                 continue;
             };
             let result = (|| -> io::Result<()> {
@@ -256,7 +369,7 @@ mod tests {
             name: "test.png".into(),
         }];
         let mut previews = vec![Preview::load(&image)];
-        let mut graphics = Graphics {
+        let mut graphics = Renderer {
             socket,
             pane: "w1:p9".into(),
             cell: None,

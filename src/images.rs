@@ -9,6 +9,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -19,13 +20,21 @@ pub struct Attachment {
     pub name: String,
 }
 
+#[derive(Clone)]
 pub struct Preview {
     pub width: u32,
     pub height: u32,
     pub error: Option<String>,
-    pixels: Option<RgbImage>,
+    pixels: Option<Arc<RgbImage>>,
     cached: Option<(u16, u16, RgbImage)>,
-    png: Option<Vec<u8>>,
+    png: Option<EncodedPreview>,
+}
+
+#[derive(Clone)]
+struct EncodedPreview {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
 }
 
 impl Preview {
@@ -43,16 +52,32 @@ impl Preview {
         }
     }
 
-    pub fn png(&mut self) -> Option<(u32, u32, &[u8])> {
+    pub fn png(&mut self, width: u32, height: u32) -> Option<(u32, u32, &[u8])> {
         let pixels = self.pixels.as_ref()?;
-        if self.png.is_none() {
+        let scale = (f64::from(width.max(1)) / f64::from(pixels.width()))
+            .min(f64::from(height.max(1)) / f64::from(pixels.height()))
+            .min(1.0);
+        let width = (f64::from(pixels.width()) * scale).floor().max(1.0) as u32;
+        let height = (f64::from(pixels.height()) * scale).floor().max(1.0) as u32;
+        if self
+            .png
+            .as_ref()
+            .is_none_or(|png| png.width != width || png.height != height)
+        {
+            let resized = image::imageops::thumbnail(pixels.as_ref(), width, height);
+            let (width, height) = resized.dimensions();
             let mut encoded = Cursor::new(Vec::new());
-            image::DynamicImage::ImageRgb8(pixels.clone())
+            image::DynamicImage::ImageRgb8(resized)
                 .write_to(&mut encoded, image::ImageFormat::Png)
                 .ok()?;
-            self.png = Some(encoded.into_inner());
+            self.png = Some(EncodedPreview {
+                width,
+                height,
+                data: encoded.into_inner(),
+            });
         }
-        Some((pixels.width(), pixels.height(), self.png.as_deref()?))
+        let png = self.png.as_ref()?;
+        Some((png.width, png.height, &png.data))
     }
 
     // Color half-blocks are part of the normal terminal frame. They survive
@@ -73,7 +98,7 @@ impl Preview {
                 .min(f64::from(area.height) * 2.0 / f64::from(pixels.height()));
             let width = (f64::from(pixels.width()) * scale).floor().max(1.0) as u32;
             let height = (f64::from(pixels.height()) * scale).floor().max(1.0) as u32;
-            let resized = image::imageops::thumbnail(pixels, width, height);
+            let resized = image::imageops::thumbnail(pixels.as_ref(), width, height);
             self.cached = Some((area.width, area.height, resized));
         }
         let pixels = &self.cached.as_ref().unwrap().2;
@@ -142,7 +167,7 @@ fn decode(bytes: &[u8]) -> Result<Preview, String> {
         width,
         height,
         error: None,
-        pixels: Some(pixels),
+        pixels: Some(Arc::new(pixels)),
         cached: None,
         png: None,
     })
@@ -333,5 +358,29 @@ mod tests {
             .content
             .iter()
             .any(|c| c.symbol() == "▀" && c.fg == Color::Rgb(240, 80, 50)));
+    }
+
+    #[test]
+    fn pixel_previews_fit_the_display_and_keep_original_dimensions() {
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(RgbImage::from_pixel(1024, 512, image::Rgb([240, 80, 50])))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let mut preview = decode(bytes.get_ref()).unwrap();
+        let shared = preview.clone();
+        assert!(Arc::ptr_eq(
+            preview.pixels.as_ref().unwrap(),
+            shared.pixels.as_ref().unwrap()
+        ));
+        let (w, h, png) = preview.png(160, 120).unwrap();
+        assert_eq!((w, h), (160, 80));
+        assert_eq!(image::load_from_memory(png).unwrap().width(), w);
+        let cached = png.as_ptr();
+        assert_eq!(preview.png(160, 120).unwrap().2.as_ptr(), cached);
+        let (w, h, _) = preview.png(80, 40).unwrap();
+        assert_eq!((w, h), (80, 40));
+        let (w, h, _) = preview.png(4096, 4096).unwrap();
+        assert_eq!((w, h), (1024, 512));
+        assert_eq!((preview.width, preview.height), (1024, 512));
     }
 }
