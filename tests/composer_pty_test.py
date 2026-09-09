@@ -30,6 +30,8 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
         while b'CATALOG_READY' not in data and time.monotonic()<deadline:
             if select.select([fd],[],[],.1)[0]:data+=os.read(fd,65536)
         assert b'CATALOG_READY' in data,repr(data[-1000:])
+        assert b'\x1b[?1002h' in data, 'drag tracking must remain enabled'
+        assert b'\x1b[?1003h' not in data, 'unused hover tracking floods remote input'
         return pid,fd
     def finish(pid,fd):
         deadline=time.monotonic()+8;data=b''
@@ -44,11 +46,40 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     def draft():return json.loads(draftpath().read_text())
     def paste(fd,text):os.write(fd,b'\x1b[200~'+text.encode()+b'\x1b[201~');time.sleep(.15)
     def send(fd,keys):os.write(fd,keys);time.sleep(.1)
+    def collect(fd,seconds):
+        data=b'';deadline=time.monotonic()+seconds
+        while time.monotonic()<deadline:
+            if select.select([fd],[],[],max(0,deadline-time.monotonic()))[0]:data+=os.read(fd,65536)
+        return data
+    def expect_output(fd,marker):
+        data=b'';deadline=time.monotonic()+2
+        while marker not in data and time.monotonic()<deadline:
+            if select.select([fd],[],[],.05)[0]:data+=os.read(fd,65536)
+        assert marker in data,repr(data[-2000:])
+        assert b'\x1b[6n' not in data, 'rendering must not wait for cursor-position replies'
     def deliver():
         record=max((tmp/'state/sessions').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
         result=subprocess.run([str(binary),'__run',json.loads(record.read_text())['id']],env=env,cwd=repo,text=True,capture_output=True)
         assert result.returncode==0,result.stderr
         assert json.loads(record.read_text())['delivery']=='Confirmed'
+    pid,fd=start(remote=True)
+    collect(fd,.3)
+    assert collect(fd,.4)==b'', 'idle editor should not produce terminal traffic'
+    # A host can invalidate the screen without changing the final PTY size.
+    os.kill(pid,signal.SIGWINCH);expect_output(fd,b'New task')
+    for rows,cols in [(8,30),(32,110)]*5:
+        fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
+        expect_output(fd,b'Enlarge the pane' if cols==30 else b'New task')
+    collect(fd,.2)
+    # Ignore any stale hover events already in flight, but still process input.
+    os.write(fd,b'\x1b[<35;10;10M'*20)
+    assert collect(fd,.2)==b'', 'hover events must not trigger redraws'
+    os.write(fd,b'z');expect_output(fd,b'z')
+    # Autosave must still persist and render feedback after the idle timer fires.
+    assert collect(fd,.6), 'autosave feedback must be redrawn'
+    assert draft()['task']=='z'
+    send(fd,b'\x7f\x1b');finish(pid,fd)
+    assert draft()['task']==''
     task='Fix `auth`\n$(echo literal)\n日本語 🐑'
     pid,fd=start();paste(fd,task)
     send(fd,b'\x0c\x0a\r');send(fd,b'j\r') # override configured Tab with New worktree

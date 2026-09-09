@@ -4,10 +4,11 @@ use crate::{
 };
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyModifiers,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, Event, KeyCode,
+        KeyModifiers, MouseEventKind,
     },
     execute,
+    style::Print,
 };
 use herdr_composer::{
     catalog::Catalog,
@@ -101,9 +102,18 @@ pub fn run(paths: &Paths) -> Result<()> {
         previous(info);
     }));
     let result = (|| -> Result<()> {
-        execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste)?;
+        // Clicks, drags and scrolling are useful; hover is not. Crossterm's
+        // EnableMouseCapture also requests every motion (1003), flooding the
+        // input path over remote connections even when no button is held.
+        execute!(
+            io::stdout(),
+            Print("\x1b[?1000h\x1b[?1002h\x1b[?1006h"),
+            EnableBracketedPaste
+        )?;
         let mut last_saved = app.draft();
         let mut last_edit = Instant::now();
+        let mut redraw = true;
+        let mut terminal_size = terminal.size()?;
         loop {
             if let Some(rx) = &discovery {
                 if let Ok(result) = rx.try_recv() {
@@ -115,9 +125,20 @@ pub fn run(paths: &Paths) -> Result<()> {
                         Err(e) => app.message = format!("Catalog: {e}"),
                     };
                     discovery = None;
+                    redraw = true;
                 }
             }
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            // Keep checking the PTY size in case a resize signal is coalesced
+            // during startup. An idle text editor need not emit terminal bytes.
+            let size = terminal.size()?;
+            if redraw
+                || size != terminal_size
+                || (app.graphics.is_some() && !app.previews.is_empty())
+            {
+                terminal.draw(|frame| ui::draw(frame, &mut app))?;
+                terminal_size = size;
+                redraw = false;
+            }
             if let Some(graphics) = &mut app.graphics {
                 graphics.sync(
                     &app.image_placements,
@@ -127,6 +148,17 @@ pub fn run(paths: &Paths) -> Result<()> {
             }
             if event::poll(Duration::from_millis(100))? {
                 let event = event::read()?;
+                if matches!(&event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Moved) {
+                    continue;
+                }
+                redraw = true;
+                if matches!(event, Event::Resize(_, _)) {
+                    // The host may have resized away and back before we read
+                    // the signal, invalidating its screen at the same size.
+                    // Fullscreen resize also invalidates the diff buffer and
+                    // avoids clear()'s blocking cursor-position query.
+                    terminal.resize(terminal.size()?.into())?;
+                }
                 if matches!(&event,Event::Key(k)if k.code==KeyCode::Char('r')&&k.modifiers.contains(KeyModifiers::CONTROL))
                 {
                     if discovery.is_none() {
@@ -200,6 +232,7 @@ pub fn run(paths: &Paths) -> Result<()> {
             }
             let mut draft = app.draft();
             if draft != last_saved && last_edit.elapsed() >= Duration::from_millis(350) {
+                redraw = true;
                 match storage::save_draft(&draft_path, &mut draft) {
                     Ok(()) => {
                         app.settings.revision = draft.revision;
