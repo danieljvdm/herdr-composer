@@ -40,6 +40,8 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     assert not any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
     assert any(t['pane_id']==record['receipt']['pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
     assert record['request']['native_args']==['--model','fixture-model','-c','model_reasoning_effort="high"','-c','service_tier="default"']
+    start_args=[c[1] for c in calls(root) if c[1][:2]==['agent','start']][-1]
+    assert start_args[start_args.index('--')+1:]==['--strict-config',*record['request']['native_args']]
     run(['__run',id],env,repo,ok=False)
     assert len([c for c in calls(root) if c[1][:2]==['agent','prompt']])==1
     for task in ['Review this task\n\n$orchestrate', 'Review @README.md', 'Keep trailing space ', 'Keep trailing newline\n']:
@@ -209,3 +211,16 @@ with tempfile.TemporaryDirectory(prefix='composer-naming-') as tmp:
     run(['__run',id],env,repo);assert len(naming_calls())==before
     assert json.loads(path.read_text())['request']['branch'].startswith('task-')
 print('Branch naming passed: immediate handoff, frozen settings, one naming call, literal input, precedence, collision/failure fallback, disabled mode.')
+
+# Default Codex selections must retain the pane backend too: a bare launch
+# would otherwise attach to a shared daemon with a different login environment.
+with tempfile.TemporaryDirectory(prefix='composer-codex-backend-') as tmp:
+    root=pathlib.Path(tmp);repo,env=setup(root)
+    run(['launch','--branch','default-backend','Check launch context'],env,repo)
+    path=records(root)[0];record=json.loads(path.read_text())
+    assert record['request']['native_args']==[]
+    run(['__run',record['id']],env,repo)
+    start_args=[c[1] for c in calls(root) if c[1][:2]==['agent','start']][-1]
+    assert start_args[start_args.index('--')+1:]==['--strict-config']
+    assert json.loads(path.read_text())['delivery']=='Confirmed'
+print('Codex pane backend: ok')

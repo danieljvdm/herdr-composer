@@ -77,6 +77,11 @@ The CLI and editor use the same settings. In worktree mode, `--branch` must name
 `--base current` starts from the invoking checkout. See `herdr-composer --help`
 for all options.
 
+Composer launches Codex with `--strict-config` so it runs its backend in the
+pane's process instead of reusing an implicit shared app-server daemon. This
+preserves the pane's `HERDR_*` environment and macOS login-session access to
+Keychain. Codex will report unrecognized configuration keys at startup.
+
 To generate branch names with a separate model, enable
 [`branch_naming`](docs/configuration.md#branch-naming). Its model, effort, speed,
 and prefix are configurable. Explicit branch names always take precedence.

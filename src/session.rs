@@ -720,8 +720,14 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             "--timeout",
             "300000",
         ];
-        if !req.native_args.is_empty() {
+        if req.kind == "codex" || !req.native_args.is_empty() {
             args.push("--");
+            if req.kind == "codex" {
+                // Strict configuration requires an in-process Codex backend.
+                // An implicit shared daemon cannot inherit this pane's macOS
+                // login session or HERDR_* environment (notably after SSH startup).
+                args.push("--strict-config");
+            }
             args.extend(req.native_args.iter().map(String::as_str));
         }
         r.step = "starting_agent".into();
