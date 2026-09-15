@@ -57,8 +57,9 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
             if select.select([fd],[],[],.05)[0]:data+=os.read(fd,65536)
         assert marker in data,repr(data[-2000:])
         assert b'\x1b[6n' not in data, 'rendering must not wait for cursor-position replies'
-    def deliver():
-        record=max((tmp/'state/sessions').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
+    def latest_session():return max((tmp/'state/sessions').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
+    def deliver(record=None):
+        if record is None:record=latest_session()
         result=subprocess.run([str(binary),'__run',json.loads(record.read_text())['id']],env=env,cwd=repo,text=True,capture_output=True)
         assert result.returncode==0,result.stderr
         assert json.loads(record.read_text())['delivery']=='Confirmed'
@@ -88,11 +89,31 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     send(fd,b'\x0a\r');send(fd,b'j\r') # configured model
     send(fd,b'\x1b');finish(pid,fd)
     saved=draft();assert saved['launch_mode']=='worktree';assert saved['task']==task;assert saved['provider']=='worktrunk';assert saved['agent']=='codex';assert saved['model']=='fixture'
+    env['FIXTURE_HANDOFF_FAIL']='1'
+    pid,fd=start();send(fd,b'\x13');expect_output(fd,b'attention:');send(fd,b'\x1b');finish(pid,fd)
+    env.pop('FIXTURE_HANDOFF_FAIL')
+    assert draft()==saved,'unsuccessful handoff must preserve the draft'
     pid,fd=start();send(fd,b'\x13');finish(pid,fd)
-    assert draft()['task']==task,'queued tasks must retain their draft'
+    first_session=latest_session()
+    assert json.loads(first_session.read_text())['request']['task']==task
+    assert draft()['task']=='','handoff must clear the draft before the runner starts'
+    assert draft()['model']==saved['model'] and draft()['provider']==saved['provider']
     calls=[json.loads(line) for line in (tmp/'calls.jsonl').read_text().splitlines()]
     assert not any(program=='codex' and args[:1]==['exec'] for program,args in calls),'editor must close before naming runs'
-    deliver();assert draft()['task']==''
+    # Reopen immediately and queue another task while the first is pending.
+    next_task='Review a second task'
+    pid,fd=start();paste(fd,next_task);send(fd,b'\x13');finish(pid,fd)
+    second_session=latest_session()
+    assert second_session!=first_session
+    assert json.loads(second_session.read_text())['request']['task']==next_task
+    assert draft()['task']==''
+    # Older runners must not erase an unsent draft, even completing out of order.
+    pid,fd=start();paste(fd,'Unsent third task');send(fd,b'\x1b');finish(pid,fd)
+    unsent=draft()
+    deliver(second_session);deliver(first_session)
+    assert draft()==unsent
+    pid,fd=start();send(fd,b'\x7f'*len(unsent['task'])+b'\x1b');finish(pid,fd)
+    assert draft()['task']==''
     def png():
         def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
         return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',2,2,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\0'+b'\xff\0\0'*2+b'\0'+b'\0\xff\0'*2))+chunk(b'IEND',b'')
@@ -101,7 +122,10 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     saved=draft();assert saved['task']=='';assert len(saved['attachments'])==1
     retained=Path(saved['attachments'][0]['path']);original.unlink();assert retained.read_bytes()==payload
     pid,fd=start(remote=True);send(fd,b'\x0a\r');send(fd,b'\x08');send(fd,b'\x1b');finish(pid,fd) # preview closes independently
-    pid,fd=start(remote=True);send(fd,b'\x13');finish(pid,fd);deliver();assert draft()['attachments']==[];assert retained.read_bytes()==payload
+    pid,fd=start(remote=True);send(fd,b'\x13');finish(pid,fd)
+    assert draft()['attachments']==[],'handoff must clear images before delivery'
+    assert json.loads(latest_session().read_text())['request']['attachments']==saved['attachments']
+    deliver();assert draft()['attachments']==[];assert retained.read_bytes()==payload
     # Local clipboard uses fixture bytes; the desktop clipboard is untouched.
     clipboard=tmp/'clipboard.png';clipboard.write_bytes(payload)
     for name in ['pngpaste','wl-paste','xclip']:

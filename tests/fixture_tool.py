@@ -58,7 +58,9 @@ try:
         elif command==['tab','close']:
             if os.environ.get('FIXTURE_CLOSE_FAIL'): raise RuntimeError('close failed')
             state['tabs']=[t for t in state['tabs'] if t['tab_id']!=args[2]];emit({'type':'tab_closed'})
-        elif command==['pane','run']: emit({'type':'pane_input_sent'})
+        elif command==['pane','run']:
+            if os.environ.get('FIXTURE_HANDOFF_FAIL'): raise RuntimeError('runner handoff failed')
+            emit({'type':'pane_input_sent'})
         elif command==['pane','close']:
             # A runner can be killed by its own close request. Check durable
             # success and unlocked state at that boundary, not after return.

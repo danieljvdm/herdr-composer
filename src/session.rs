@@ -242,6 +242,12 @@ pub fn submit(
         r.herdr
             .output(&["pane", "run", &pane, &command])?
             .checked()?;
+        // The frozen session now owns the task and attachments. Let the next
+        // editor start fresh while this runner is still preparing the agent.
+        // Revision checking preserves any draft saved by another editor.
+        if let Some((p, revision)) = &r.draft {
+            storage::clear_draft(p, *revision)?;
+        }
         Ok(())
     })();
     if let Err(e) = result {
@@ -807,6 +813,8 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             r.step = "delivered".into();
             save(state, &r)?;
             if let Some((p, revision)) = &r.draft {
+                // Also cover older submissions or an uncertain handoff. This
+                // cannot clear a newer draft after successful submission.
                 storage::clear_draft(p, *revision)?;
             }
             println!("Delivered {id}. Requested agent={} model={:?} effort={:?} speed={:?}. Workspace {}",req.agent,req.model,req.effort,req.speed,r.receipt.as_ref().unwrap().workspace.as_deref().unwrap_or("unknown"));

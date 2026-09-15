@@ -3,7 +3,9 @@
 Launch a coding agent in a new worktree or a tab in your existing checkout from a task editor in [Herdr](https://herdr.dev).
 Choose a repository, attach screenshots, and set the agent, model, and effort before launching.
 
-Drafts survive closing the editor. Setup runs in the background. When you're done,
+Drafts survive closing the editor. Launching clears the task and images from the
+editor once setup is handed off, so you can compose another task immediately.
+Setup runs in the background. When you're done,
 Composer removes the session through the same tool that created it.
 
 ## Install
@@ -96,7 +98,8 @@ pass `--provider worktrunk`. You can also set `defaults.workspace = "worktrunk"`
 
 Cleanup checks the recorded checkout and workspace before removing anything.
 It keeps provider safeguards, including dirty-file checks and hook approvals.
-Failed launches retain their draft and any prepared workspace for inspection.
+Failed launches retain their submitted task, images, and any prepared workspace
+in the session record for inspection.
 Tab mode shares the selected checkout, including uncommitted work. Its cleanup
 closes only the recorded tab and keeps the checkout, files, and other tabs.
 

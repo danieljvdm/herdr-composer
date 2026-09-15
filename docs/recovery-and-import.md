@@ -5,6 +5,12 @@ workspace mutation. A source-workspace runner reads the frozen request and
 holds an exclusive record lock. Duplicate runners report state instead of
 replaying. Closing the editor cannot stop setup.
 
+Once the background runner accepts a submission, Composer clears that draft's
+task and attachments while keeping its settings. Reopening the editor starts a
+fresh task even while the previous one is preparing. The session record retains
+the submitted task and image references, including on setup or delivery failure.
+Failures before handoff leave the draft in the editor.
+
 Records distinguish NotSent, Unknown, and Confirmed delivery. Herdr startup runs
 once and waits for readiness. For Codex, Composer also requires Herdr's positive
 idle detection evidence, rather than its fallback idle state during startup.
@@ -12,7 +18,8 @@ Startup has a five-minute budget. If Codex shows a trust or other startup dialog
 resolve it in the task pane; Composer keeps the task pending and continues when
 Codex is ready. It never answers the dialog itself. The prompt runs once with a bounded lifecycle
 wait. A delivery-attempt marker precedes input. Only `agent_prompted` confirms
-delivery and clears the submitted draft revision. `agent_blocked` rejects input;
+delivery. It also clears the submitted draft revision if handoff did not already
+clear it; newer drafts are preserved. `agent_blocked` rejects input;
 stalls, timeouts, and lost responses remain Unknown. The record keeps the
 structured response. Settings are reported as requested, without footer
 scraping or an unsupported claim that runtime settings were verified.
