@@ -44,7 +44,7 @@ catalog. An explicit `catalog` setting overrides this choice:
 | `catalog` | Source |
 | --- | --- |
 | `curated` | Shipped [`catalogs/curated.json`](../catalogs/curated.json). Currently includes Claude's native model aliases without assumed effort/speed capabilities. |
-| `discovery` | Codex's local `models_cache.json` under CODEX_HOME. No Composer cache or network fallback. Other kinds report that built-in discovery is unavailable. |
+| `discovery` | Queries `codex debug models` with a five-second timeout and 1 MiB output limit. Codex manages catalog refresh. Falls back to `models_cache.json` under CODEX_HOME (normally `~/.codex`) with a diagnostic if the query fails. Other kinds report that built-in discovery is unavailable. |
 | `command` | `command = ["/absolute/catalog-program", "arg"]`, with versioned JSON stdin/stdout. Five-second timeout and 1 MiB output limits. |
 
 The catalog command receives `{"version":1,"agent":"id","kind":"codex"}` and

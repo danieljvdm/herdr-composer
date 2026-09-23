@@ -226,7 +226,7 @@ impl Catalog {
                         }
                         Ok(list.models)
                     })(),
-                    "discovery" if a.kind == "codex" => discover_codex(),
+                    "discovery" if a.kind == "codex" => discover_codex(id, &mut diagnostics),
                     "discovery" => Err(format!(
                         "{} has no built-in discovery; configure a catalog command",
                         a.kind
@@ -351,7 +351,34 @@ impl Catalog {
         Ok((id, a.clone(), m))
     }
 }
-fn discover_codex() -> Result<Vec<Model>> {
+fn discover_codex(id: &str, diagnostics: &mut Vec<String>) -> Result<Vec<Model>> {
+    let live = (|| -> Result<Vec<Model>> {
+        let output = process::run(
+            &["codex".into(), "debug".into(), "models".into()],
+            Path::new("/"),
+            None,
+            Duration::from_secs(5),
+        )?
+        .checked()?;
+        let models = parse_codex_models(output.as_bytes())?;
+        validate(&models, true)?;
+        Ok(models)
+    })();
+    match live {
+        Ok(models) => Ok(models),
+        Err(error) => {
+            let models = read_codex_cache().map_err(|cache_error| {
+                format!("Codex model query failed: {error}; cache unavailable: {cache_error}")
+            })?;
+            diagnostics.push(format!(
+                "{id}: Codex model query failed: {error}; using local model cache, which may be stale"
+            ));
+            Ok(models)
+        }
+    }
+}
+
+fn read_codex_cache() -> Result<Vec<Model>> {
     use std::io::Read;
     let root = std::env::var_os("CODEX_HOME")
         .map(std::path::PathBuf::from)
@@ -365,7 +392,11 @@ fn discover_codex() -> Result<Vec<Model>> {
     if bytes.len() > 1024 * 1024 {
         return Err("Codex discovery output exceeds 1 MiB".into());
     }
-    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    parse_codex_models(&bytes)
+}
+
+fn parse_codex_models(bytes: &[u8]) -> Result<Vec<Model>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let list = value["models"]
         .as_array()
         .ok_or("Codex discovery has no models")?;
