@@ -647,8 +647,10 @@ fn codex_input_prompt_visible(screen: &str) -> bool {
         .filter(|line| !line.is_empty());
     let footer = lines.next_back();
     let prompt = lines.next_back();
-    prompt == Some("› Ask Codex to do anything")
-        && footer.is_some_and(|line| line.contains(" · Ready · "))
+    matches!(
+        prompt,
+        Some("› Ask Codex to do anything" | "» Ask Codex to do anything")
+    ) && footer.is_some_and(|line| line.contains(" · Ready · "))
 }
 
 fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) -> Result<()> {
@@ -1221,4 +1223,41 @@ pub fn remove(state: &Path, id: &str) -> Result<()> {
         return Err(format!("Cleanup needs attention for {id}: {e}").into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::codex_input_prompt_visible;
+
+    #[test]
+    fn recognizes_both_codex_prompt_markers() {
+        for marker in ['›', '»'] {
+            let screen = format!(
+                "╭────────────────────────────────────╮\n\
+                 │ >_ OpenAI Codex (v0.156.1)          │\n\
+                 ╰────────────────────────────────────╯\n\n\
+                 {marker} Ask Codex to do anything\n\n\
+                   GPT-6-Astra ultra · Ready · Fast on · fixture · ~/repo\n\n"
+            );
+            assert!(codex_input_prompt_visible(&screen), "{screen}");
+        }
+    }
+
+    #[test]
+    fn requires_current_empty_prompt_and_ready_footer() {
+        for marker in ['›', '»'] {
+            let prompt = format!("{marker} Ask Codex to do anything");
+            let ready = format!("{prompt}\nGPT-6-Astra ultra · Ready · Fast on");
+            for screen in [
+                prompt.clone(),
+                format!("{prompt}\nGPT-6-Astra ultra · Working · Fast on"),
+                format!("{marker} pending task\nGPT-6-Astra ultra · Ready · Fast on"),
+                format!("{ready}\nDo you trust the contents of this directory?"),
+                format!("{ready}\nPress enter to continue"),
+                format!("{prompt}\nStartup dialog\nGPT-6-Astra ultra · Ready · Fast on"),
+            ] {
+                assert!(!codex_input_prompt_visible(&screen), "{screen}");
+            }
+        }
+    }
 }

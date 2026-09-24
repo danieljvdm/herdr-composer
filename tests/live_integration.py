@@ -30,7 +30,10 @@ for provider in options.providers:
         if record['receipt'] and record['receipt']['pane'] and not approved_test_repo:
             pane=record['receipt']['pane']
             screen=command(['herdr','pane','read',pane,'--source','visible'],env=env)
-            if 'Do you trust the contents of this directory?' in screen:
+            trust_dialog=('Do you trust the contents of this directory?' in screen
+                          or ('Folder access' in screen and 'Trust this folder?' in screen
+                              and '1. Trust and continue' in screen))
+            if trust_dialog:
                 # This test owns the empty repository. Emulate its user's
                 # deliberate trust choice; production Composer never does this.
                 assert record['delivery']=='NotSent'

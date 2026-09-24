@@ -63,7 +63,8 @@ try:
             emit({'type':'pane_input_sent'})
         elif command==['pane','read']:
             if state.get('readiness_polls',0)>=3:
-                print('› Ask Codex to do anything\n\n  GPT-6-Sol medium · Ready · Fast on · fixture')
+                marker=os.environ.get('FIXTURE_PROMPT_MARKER','›')
+                print(f'{marker} Ask Codex to do anything\n\n  GPT-6-Sol medium · Ready · Fast on · fixture')
             else:
                 print('Codex startup dialog')
         elif command==['pane','close']:

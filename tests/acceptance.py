@@ -89,17 +89,22 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','start']])==1
     # Herdr can report fallback idle without visible_idle while Codex's
     # current input line and Ready footer are plainly visible.
-    path,id=launch(root,repo,env);before=len(calls(root))
-    run(['__run',id],dict(env,FIXTURE_VISIBLE_IDLE_FALLBACK='1'),repo)
-    assert json.loads(path.read_text())['delivery']=='Confirmed'
-    assert len([c for c in calls(root)[before:] if c[1][:2]==['pane','read']])>=3
+    for marker in ['›','»']:
+        path,id=launch(root,repo,env);before=len(calls(root))
+        run(['__run',id],dict(env,FIXTURE_VISIBLE_IDLE_FALLBACK='1',FIXTURE_PROMPT_MARKER=marker),repo)
+        assert json.loads(path.read_text())['delivery']=='Confirmed'
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['pane','read']])==3
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
     for condition in ['FIXTURE_IDENTITY_CHANGED','FIXTURE_READY_INVALID']:
         path,id=launch(root,repo,env);before=len(calls(root))
         run(['__run',id],dict(env,**{condition:'1'}),repo,ok=False)
         record=json.loads(path.read_text());assert record['delivery']=='NotSent' and record['error']
         assert not any(c[1][:2] in [['agent','prompt'],['pane','close']] for c in calls(root)[before:])
-        run(['resume','--session',id],env,repo)
+        before=len(calls(root))
+        run(['resume','--session',id],dict(env,FIXTURE_VISIBLE_IDLE_FALLBACK='1',FIXTURE_PROMPT_MARKER='»'),repo)
         assert json.loads(path.read_text())['delivery']=='Confirmed'
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
+        assert not any(c[1][:2]==['agent','start'] for c in calls(root)[before:])
     for code,expected in [('agent_blocked','NotSent'),('agent_prompt_stalled','Unknown'),('timeout','Unknown')]:
         path,id=launch(root,repo,env);run(['__run',id],dict(env,FIXTURE_PROMPT_FAIL=code),repo,ok=False)
         record=json.loads(path.read_text());assert record['delivery']==expected
