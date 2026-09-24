@@ -1,6 +1,6 @@
 id = "composer"
 name = "Herdr Composer"
-version = "0.3.9"
+version = "0.3.10"
 min_herdr_version = "0.8.2"
 description = "Compose tasks and launch coding agents in worktrees or tabs"
 platforms = ["macos", "linux"]

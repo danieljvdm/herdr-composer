@@ -61,6 +61,11 @@ try:
         elif command==['pane','run']:
             if os.environ.get('FIXTURE_HANDOFF_FAIL'): raise RuntimeError('runner handoff failed')
             emit({'type':'pane_input_sent'})
+        elif command==['pane','read']:
+            if state.get('readiness_polls',0)>=3:
+                print('› Ask Codex to do anything\n\n  GPT-6-Sol medium · Ready · Fast on · fixture')
+            else:
+                print('Codex startup dialog')
         elif command==['pane','close']:
             # A runner can be killed by its own close request. Check durable
             # success and unlocked state at that boundary, not after return.
@@ -104,7 +109,7 @@ try:
             poll=state['readiness_polls']
             # A false idle is followed by a trust dialog. Only after the user
             # resolves it does positive idle evidence permit the task.
-            result={'agent':'codex','state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3}
+            result={'agent':'codex','state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3 and not os.environ.get('FIXTURE_VISIBLE_IDLE_FALLBACK')}
             if os.environ.get('FIXTURE_READY_INVALID'):result.pop('visible_idle')
             state_path.write_text(json.dumps(state));print(json.dumps(result))
         elif command==['agent','prompt']:

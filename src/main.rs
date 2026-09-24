@@ -26,7 +26,7 @@ fn run() -> Result<()> {
     let paths = Paths::discover();
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
-            println!("Herdr Composer\n\nherdr-composer                         Open editor\nherdr-composer launch [OPTIONS] TEXT   Launch a task, or use - for stdin\nherdr-composer catalog --json          Inspect resolved agent/model catalog\nherdr-composer remove --session ID     Remove a recorded session\nherdr-composer remove --current        Pin and remove the caller's session\nherdr-composer import-worktrunk PATH [--preview]\n\nLaunch options: --launch-mode worktree|tab --repo PATH|NAME --provider ID --branch NAME --base REF|current\n                --agent ID --model ID|ALIAS --effort VALUE --speed VALUE\n                --focus --no-focus --attach PATH (repeatable)\nUse -- before task text that begins with a dash.\nEditor: Ctrl+S launch, Ctrl+R refresh catalog, Esc save and close.");
+            println!("Herdr Composer\n\nherdr-composer                         Open editor\nherdr-composer launch [OPTIONS] TEXT   Launch a task, or use - for stdin\nherdr-composer catalog --json          Inspect resolved agent/model catalog\nherdr-composer resume --session ID     Deliver a failed, unsent Codex task\nherdr-composer remove --session ID     Remove a recorded session\nherdr-composer remove --current        Pin and remove the caller's session\nherdr-composer import-worktrunk PATH [--preview]\n\nLaunch options: --launch-mode worktree|tab --repo PATH|NAME --provider ID --branch NAME --base REF|current\n                --agent ID --model ID|ALIAS --effort VALUE --speed VALUE\n                --focus --no-focus --attach PATH (repeatable)\nUse -- before task text that begins with a dash.\nEditor: Ctrl+S launch, Ctrl+R refresh catalog, Esc save and close.");
             Ok(())
         }
         Some("--version") => {
@@ -34,6 +34,9 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("__run") => session::run(&paths.state, args.get(1).ok_or("missing session ID")?),
+        Some("resume") if args.len() == 3 && args[1] == "--session" => {
+            session::resume(&paths.state, &args[2])
+        }
         Some("__remove") => session::remove(&paths.state, args.get(1).ok_or("missing session ID")?),
         Some("__action") => action(&paths, args.get(1).ok_or("missing action")?),
         Some("__confirm-remove") => {

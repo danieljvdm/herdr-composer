@@ -12,8 +12,9 @@ the submitted task and image references, including on setup or delivery failure.
 Failures before handoff leave the draft in the editor.
 
 Records distinguish NotSent, Unknown, and Confirmed delivery. Herdr startup runs
-once and waits for readiness. For Codex, Composer also requires Herdr's positive
-idle detection evidence, rather than its fallback idle state during startup.
+once and waits for readiness. For Codex, Composer requires Herdr's positive
+idle detection evidence or a stable input prompt and Ready footer on the live
+screen. Herdr's fallback idle state alone is insufficient during startup.
 Startup has a five-minute budget. If Codex shows a trust or other startup dialog,
 resolve it in the task pane; Composer keeps the task pending and continues when
 Codex is ready. It never answers the dialog itself. The prompt runs once with a bounded lifecycle
@@ -35,8 +36,12 @@ the task's pane or other panes added to the preparation tab.
 
 On failure, open the workspace named in the record and inspect its runner/agent.
 For an approval dialog, resolve it yourself. For Unknown delivery, inspect
-before manually sending the task. Composer has no automatic resume, resend, or
-rollback. If cleanup was refused because of dirty work, save that work and run
+before manually sending the task. A failed session with `agent_started`,
+`NotSent`, and no prompt attempt can be retried explicitly with
+`herdr-composer resume --session ID`. This checks the same named agent and pane
+before its single prompt attempt; it does not restart the workspace or agent.
+Composer has no automatic resume, resend, or rollback. If cleanup was refused
+because of dirty work, save that work and run
 removal again. A timeout during removal requires provider inspection. If
 provider removal succeeded but workspace closure failed, rerun removal from
 the source workspace to finish closure.

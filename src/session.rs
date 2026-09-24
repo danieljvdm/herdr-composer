@@ -640,8 +640,20 @@ fn name_branch(state: &Path, record: &mut SessionRecord) -> Result<()> {
     save(state, record)
 }
 
+fn codex_input_prompt_visible(screen: &str) -> bool {
+    let mut lines = screen
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let footer = lines.next_back();
+    let prompt = lines.next_back();
+    prompt == Some("› Ask Codex to do anything")
+        && footer.is_some_and(|line| line.contains(" · Ready · "))
+}
+
 fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) -> Result<()> {
     let mut reported_blocker = false;
+    let mut prompt_seen = 0;
     loop {
         let live = h.call(&["agent", "get", name])?;
         let agent = &live["result"]["agent"];
@@ -657,11 +669,28 @@ fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) ->
                 "Herdr did not return Codex readiness evidence; task has not been sent".into(),
             );
         }
-        if detection["state"] == "idle"
-            && detection["visible_idle"] == true
-            && agent["interactive_ready"] == true
-        {
-            return Ok(());
+        if detection["state"] == "idle" && agent["interactive_ready"] == true {
+            if detection["visible_idle"] == true {
+                return Ok(());
+            }
+            // A current Codex screen can be ready even when Herdr's remote
+            // detector falls back to idle without setting visible_idle.
+            // Require the input line and Ready footer at the bottom of the
+            // live screen on consecutive polls, never an earlier scrollback
+            // prompt that a startup dialog might have covered.
+            let screen = h
+                .output(&["pane", "read", pane, "--source", "detection"])?
+                .checked()?;
+            if codex_input_prompt_visible(&screen) {
+                prompt_seen += 1;
+                if prompt_seen >= 2 {
+                    return Ok(());
+                }
+            } else {
+                prompt_seen = 0;
+            }
+        } else {
+            prompt_seen = 0;
         }
         if !reported_blocker
             && (detection["state"] == "blocked" || agent["agent_status"] == "blocked")
@@ -673,6 +702,84 @@ fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) ->
             return Err(format!("Codex is not ready for task input in pane {pane}; task has not been sent. Inspect its startup dialog").into());
         }
         std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn deliver(state: &Path, r: &mut SessionRecord, pane: &str) -> Result<()> {
+    let req = r.request.as_ref().ok_or("session has no task")?.clone();
+    let mut prompt = req.task.clone();
+    if !req.attachments.is_empty() {
+        prompt.push_str("\n\nAttached images (retained originals):\n");
+        for a in &req.attachments {
+            prompt.push_str(&serde_json::to_string(&a.path)?);
+            prompt.push('\n');
+        }
+    }
+    if req.kind == "codex" && !prompt.ends_with(char::is_whitespace) {
+        prompt.push('\n');
+    }
+    r.step = "delivery_attempted".into();
+    r.delivery = Delivery::Unknown;
+    save(state, r)?;
+    let output = r.herdr.output(&[
+        "agent",
+        "prompt",
+        pane,
+        &prompt,
+        "--wait",
+        "--until",
+        "working",
+        "--until",
+        "done",
+        "--until",
+        "idle",
+        "--until",
+        "blocked",
+        "--timeout",
+        "10000",
+    ])?;
+    let response: Value = serde_json::from_str(if output.success {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .unwrap_or(json!({"stdout":output.stdout,"stderr":output.stderr}));
+    r.prompt_result = Some(response.clone());
+    if output.success
+        && response.pointer("/result/type").and_then(Value::as_str) == Some("agent_prompted")
+    {
+        r.delivery = Delivery::Confirmed;
+        r.step = "delivered".into();
+        r.error = None;
+        save(state, r)?;
+        if let Some((p, revision)) = &r.draft {
+            storage::clear_draft(p, *revision)?;
+        }
+        println!(
+            "Delivered {}. Requested agent={} model={:?} effort={:?} speed={:?}. Workspace {}",
+            r.id,
+            req.agent,
+            req.model,
+            req.effort,
+            req.speed,
+            r.receipt
+                .as_ref()
+                .unwrap()
+                .workspace
+                .as_deref()
+                .unwrap_or("unknown")
+        );
+        Ok(())
+    } else {
+        if response.pointer("/error/code").and_then(Value::as_str) == Some("agent_blocked") {
+            r.delivery = Delivery::NotSent;
+        }
+        save(state, r)?;
+        Err(format!(
+            "prompt {:?}: {response}. Inspect the agent before sending anything again",
+            r.delivery
+        )
+        .into())
     }
 }
 
@@ -768,68 +875,7 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             println!("Waiting for Codex input readiness in pane {pane}; resolve any startup dialogs there.");
             wait_for_codex_input(&r.herdr, &name, &pane, deadline)?;
         }
-        let mut prompt = req.task.clone();
-        if !req.attachments.is_empty() {
-            prompt.push_str("\n\nAttached images (retained originals):\n");
-            for a in &req.attachments {
-                prompt.push_str(&serde_json::to_string(&a.path)?);
-                prompt.push('\n');
-            }
-        }
-        if req.kind == "codex" && !prompt.ends_with(char::is_whitespace) {
-            prompt.push('\n');
-        }
-        r.step = "delivery_attempted".into();
-        r.delivery = Delivery::Unknown;
-        save(state, &r)?;
-        let output = r.herdr.output(&[
-            "agent",
-            "prompt",
-            &pane,
-            &prompt,
-            "--wait",
-            "--until",
-            "working",
-            "--until",
-            "done",
-            "--until",
-            "idle",
-            "--until",
-            "blocked",
-            "--timeout",
-            "10000",
-        ])?;
-        let response: Value = serde_json::from_str(if output.success {
-            &output.stdout
-        } else {
-            &output.stderr
-        })
-        .unwrap_or(json!({"stdout":output.stdout,"stderr":output.stderr}));
-        r.prompt_result = Some(response.clone());
-        if output.success
-            && response.pointer("/result/type").and_then(Value::as_str) == Some("agent_prompted")
-        {
-            r.delivery = Delivery::Confirmed;
-            r.step = "delivered".into();
-            save(state, &r)?;
-            if let Some((p, revision)) = &r.draft {
-                // Also cover older submissions or an uncertain handoff. This
-                // cannot clear a newer draft after successful submission.
-                storage::clear_draft(p, *revision)?;
-            }
-            println!("Delivered {id}. Requested agent={} model={:?} effort={:?} speed={:?}. Workspace {}",req.agent,req.model,req.effort,req.speed,r.receipt.as_ref().unwrap().workspace.as_deref().unwrap_or("unknown"));
-            Ok(())
-        } else {
-            if response.pointer("/error/code").and_then(Value::as_str) == Some("agent_blocked") {
-                r.delivery = Delivery::NotSent;
-            }
-            save(state, &r)?;
-            Err(format!(
-                "prompt {:?}: {response}. Inspect the agent before sending anything again",
-                r.delivery
-            )
-            .into())
-        }
+        deliver(state, &mut r, &pane)
     })();
     if let Err(e) = result {
         r.error = Some(e.to_string());
@@ -849,6 +895,45 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         r.herdr.call(&["pane", "close", pane]).map_err(|e| {
             format!("Session {id} delivered, but preparation pane {pane} could not close: {e}")
         })?;
+    }
+    Ok(())
+}
+
+pub fn resume(state: &Path, id: &str) -> Result<()> {
+    let lock = storage::lock(&path(state, id)?.with_extension("lock"))?;
+    let mut r = load(state, id)?;
+    if r.step != "agent_started"
+        || r.delivery != Delivery::NotSent
+        || r.prompt_result.is_some()
+        || r.error.is_none()
+    {
+        return Err("Only a failed, unsent Codex startup can be resumed".into());
+    }
+    let req = r.request.as_ref().ok_or("session has no task")?;
+    if req.kind != "codex" {
+        return Err("resume requires a Codex session".into());
+    }
+    let pane = r
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.pane.clone())
+        .ok_or("session has no prepared pane")?;
+    let name = format!("c{}", &r.id[..r.id.len().min(25)]);
+    let result = wait_for_codex_input(
+        &r.herdr,
+        &name,
+        &pane,
+        Instant::now() + Duration::from_secs(30),
+    )
+    .and_then(|_| deliver(state, &mut r, &pane));
+    if let Err(error) = result {
+        r.error = Some(error.to_string());
+        save(state, &r)?;
+        return Err(format!("Session {id} needs attention: {error}").into());
+    }
+    drop(lock);
+    if let Some(pane) = &r.runner_pane {
+        r.herdr.call(&["pane", "close", pane])?;
     }
     Ok(())
 }
