@@ -645,7 +645,10 @@ fn codex_input_prompt_visible(screen: &str) -> bool {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty());
-    let footer = lines.next_back();
+    let mut footer = lines.next_back();
+    if footer.is_some_and(|line| line.starts_with("? for shortcuts")) {
+        footer = lines.next_back();
+    }
     let prompt = lines.next_back();
     matches!(
         prompt,
@@ -1240,6 +1243,13 @@ mod readiness_tests {
                    GPT-6-Astra ultra · Ready · Fast on · fixture · ~/repo\n\n"
             );
             assert!(codex_input_prompt_visible(&screen), "{screen}");
+            let screen_with_shortcuts = format!(
+                "{screen}? for shortcuts                         ⚠ 1 warning · f2 to view\n"
+            );
+            assert!(
+                codex_input_prompt_visible(&screen_with_shortcuts),
+                "{screen_with_shortcuts}"
+            );
         }
     }
 
