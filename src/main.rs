@@ -26,7 +26,7 @@ fn run() -> Result<()> {
     let paths = Paths::discover();
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
-            println!("Herdr Composer\n\nherdr-composer                         Open editor\nherdr-composer launch [OPTIONS] TEXT   Launch a task, or use - for stdin\nherdr-composer catalog --json          Inspect resolved agent/model catalog\nherdr-composer resume --session ID     Deliver a failed, unsent Codex task\nherdr-composer remove --session ID     Remove a recorded session\nherdr-composer remove --current        Pin and remove the caller's session\nherdr-composer import-worktrunk PATH [--preview]\n\nLaunch options: --launch-mode worktree|tab --repo PATH|NAME --provider ID --branch NAME --base REF|current\n                --agent ID --model ID|ALIAS --effort VALUE --speed VALUE\n                --focus --no-focus --attach PATH (repeatable)\nUse -- before task text that begins with a dash.\nEditor: Ctrl+S launch, Ctrl+R refresh catalog, Esc save and close.");
+            println!("Herdr Composer\n\nherdr-composer                         Open editor\nherdr-composer launch [OPTIONS] TEXT   Launch a task, or use - for stdin\nherdr-composer catalog --json          Inspect resolved agent/model catalog\nherdr-composer resume --session ID     Deliver a failed, unsent Codex task\nherdr-composer remove --session ID     Remove a recorded session\nherdr-composer remove --current        Pin and remove the caller's session\nherdr-composer import-worktrunk PATH [--preview]\n\nLaunch options: --default-agent ID --launch-mode worktree|tab --repo PATH|NAME --provider ID --branch NAME --base REF|current\n                --agent ID --model ID|ALIAS --effort VALUE --speed VALUE\n                --focus --no-focus --attach PATH (repeatable)\nUse -- before task text that begins with a dash.\nEditor: Ctrl+S launch, Ctrl+R refresh catalog, Esc save and close.");
             Ok(())
         }
         Some("--version") => {
@@ -88,8 +88,16 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("launch") => {
-            let d = parse_launch(&args[1..])?;
+            let (d, default_agent) = parse_launch(&args[1..])?;
             let mut c = paths.load()?;
+            if let Some(agent) = default_agent {
+                if agent != c.defaults.agent {
+                    c.defaults.model.clear();
+                    c.defaults.effort.clear();
+                    c.defaults.speed.clear();
+                }
+                c.defaults.agent = agent;
+            }
             c.add_open_repositories();
             let cat = Catalog::load(&c, true)?;
             let invoking = request::checkout(&env::current_dir()?).ok();
@@ -109,8 +117,9 @@ fn run() -> Result<()> {
         _ => Err("unknown command; see herdr-composer --help".into()),
     }
 }
-fn parse_launch(args: &[String]) -> Result<Draft> {
+fn parse_launch(args: &[String]) -> Result<(Draft, Option<String>)> {
     let mut d = Draft::default();
+    let mut default_agent = None;
     let mut i = 0;
     let mut text = None;
     while i < args.len() {
@@ -119,7 +128,7 @@ fn parse_launch(args: &[String]) -> Result<Draft> {
             "--focus" => d.focus = Some(true),
             "--no-focus" => d.focus = Some(false),
             "--repo" | "--provider" | "--launch-mode" | "--branch" | "--base" | "--agent"
-            | "--model" | "--effort" | "--speed" | "--attach" => {
+            | "--model" | "--effort" | "--speed" | "--attach" | "--default-agent" => {
                 i += 1;
                 let v = args
                     .get(i)
@@ -129,6 +138,7 @@ fn parse_launch(args: &[String]) -> Result<Draft> {
                     return Err(format!("{arg} cannot be empty; omit it for Automatic").into());
                 }
                 match arg.as_str() {
+                    "--default-agent" => default_agent = Some(v),
                     "--repo" => {
                         d.repo = v;
                         d.repo_explicit = true
@@ -176,7 +186,7 @@ fn parse_launch(args: &[String]) -> Result<Draft> {
         i += 1;
     }
     d.task = text.unwrap_or_default();
-    Ok(d)
+    Ok((d, default_agent))
 }
 fn action(paths: &Paths, action: &str) -> Result<()> {
     let context: serde_json::Value = serde_json::from_str(&env::var("HERDR_PLUGIN_CONTEXT_JSON")?)?;

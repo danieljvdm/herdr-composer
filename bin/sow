@@ -1,23 +1,53 @@
 #!/usr/bin/env bash
 # Keep the existing sow command and common flags while Composer owns launching.
 set -euo pipefail
-args=(launch --provider worktrunk --launch-mode worktree)
-while (($#)); do
-  case $1 in
-    --help|-h) args=(--help); shift; break ;;
-    --codex|--claude|--opencode2|--grok) args+=(--agent "${1#--}"); shift ;;
-    --here) args+=(--base current); shift ;;
-    -a|--agent|-b|--branch|-C|--repo|--base|--model|--effort|--speed|--attach)
-      (($# >= 2)) || { printf 'sow: missing value for %s\n' "$1" >&2; exit 2; }
-      case $1 in -a) key=--agent ;; -b) key=--branch ;; -C) key=--repo ;; *) key=$1 ;; esac
-      args+=("$key" "$2"); shift 2 ;;
-    --focus|--no-focus) args+=("$1"); shift ;;
-    --) shift; args+=(-- "$*"); break ;;
-    -) args+=(-); shift; (($# == 0)) || { printf 'sow: - reads the task from stdin\n' >&2; exit 2; }; break ;;
-    -*) printf 'sow: unsupported option %s; use sow --help\n' "$1" >&2; exit 2 ;;
-    *) args+=(-- "$*"); break ;;
+usage() {
+  cat <<'EOF'
+Usage: sow [OPTIONS] TASK
+       sow [OPTIONS] -                 Read the task from stdin
+       sow catalog [--json]            Inspect models without launching a task
+
+Launch options: --codex --claude --opencode2 --grok --agent ID
+                --branch NAME --repo PATH --base REF --here
+                --model ID --effort VALUE --speed VALUE
+                --focus --no-focus --attach PATH (repeatable)
+Aliases: -a agent, -b branch, -C repo
+Put options before task text. Use -- before literal task arguments.
+Codex is the default agent; explicit agents and model choices take precedence.
+EOF
+}
+if [[ ${1:-} == catalog ]]; then
+  shift
+  case $#:${1:-} in
+    0:|1:--json) args=(catalog --json) ;;
+    1:--help|1:-h) usage; exit 0 ;;
+    *) printf 'sow: usage: sow catalog [--json]\n' >&2; exit 2 ;;
   esac
-done
+else
+  args=(launch --provider worktrunk --launch-mode worktree --default-agent codex)
+  while (($#)); do
+    case $1 in
+      --help|-h) usage; exit 0 ;;
+      --codex|--claude|--opencode2|--grok) args+=(--agent "${1#--}"); shift ;;
+      --here) args+=(--base current); shift ;;
+      -a|--agent|-b|--branch|-C|--repo|--base|--model|--effort|--speed|--attach)
+        (($# >= 2)) || { printf 'sow: missing value for %s\n' "$1" >&2; exit 2; }
+        case $1 in -a) key=--agent ;; -b) key=--branch ;; -C) key=--repo ;; *) key=$1 ;; esac
+        args+=("$key" "$2"); shift 2 ;;
+      --focus|--no-focus) args+=("$1"); shift ;;
+      --) shift; args+=(-- "$*"); break ;;
+      -) args+=(-); shift; (($# == 0)) || { printf 'sow: - reads the task from stdin\n' >&2; exit 2; }; break ;;
+      -*) printf 'sow: unsupported option %s; use sow --help\n' "$1" >&2; exit 2 ;;
+      *)
+        for word in "$@"; do
+          case $word in
+            -*) printf 'sow: option %s follows task text; put options first or use -- for a literal task\n' "$word" >&2; exit 2 ;;
+          esac
+        done
+        args+=(-- "$*"); break ;;
+    esac
+  done
+fi
 herdr=${HERDR_BIN_PATH:-herdr}
 plugin_root=$("$herdr" plugin list --plugin composer --json \
   | jq -r '.result.plugins[] | select(.plugin_id == "composer" and .enabled) | .plugin_root')

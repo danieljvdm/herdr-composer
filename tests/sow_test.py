@@ -17,10 +17,32 @@ with tempfile.TemporaryDirectory(prefix='composer-sow-') as temporary:
     result = subprocess.run([str(wrapper), '--no-focus', '-b', 'dan/fix-auth', '--codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--here', '-'], input=task, env=env, text=True, capture_output=True, check=True)
     actual = json.loads(result.stdout)
     assert actual['stdin'] == task
-    assert actual['argv'] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--no-focus', '--branch', 'dan/fix-auth', '--agent', 'codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--base', 'current', '-']
+    assert actual['argv'] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex', '--no-focus', '--branch', 'dan/fix-auth', '--agent', 'codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--base', 'current', '-']
     result = subprocess.run([str(wrapper), '--', '--literal', 'task'], input='', env=env, text=True, capture_output=True, check=True)
     assert json.loads(result.stdout)['argv'][-2:] == ['--', '--literal task']
-    for args in [['-b'], ['--unknown'], ['-', 'extra']]:
+    for args in [['catalog'], ['catalog', '--json']]:
+        result = subprocess.run([str(wrapper), *args], input='', env=env, text=True, capture_output=True, check=True)
+        assert json.loads(result.stdout)['argv'] == ['catalog', '--json']
+    for args in [['--help'], ['catalog', '--help']]:
+        result = subprocess.run([str(wrapper), *args], input='', env=dict(env, HERDR_BIN_PATH='/missing/herdr'), text=True, capture_output=True, check=True)
+        assert 'sow catalog [--json]' in result.stdout
+    for args in [['-b'], ['--unknown'], ['-', 'extra'], ['catalog', '--unknown'], ['catalog', '--json', 'extra'], ['models', '--json'], ['task', '--model', 'gpt-6.1-sol']]:
         result = subprocess.run([str(wrapper), *args], input='', env=env, text=True, capture_output=True)
         assert result.returncode == 2, (args, result)
-print('sow wrapper passed: existing flags, literal arguments, stdin, invalid options.')
+        assert result.stdout == '', (args, result)
+    for args, expected_task in [(['--', 'catalog', '--json'], 'catalog --json'), (['fix', 'auth'], 'fix auth'), (['--', 'task', '--model', 'gpt-6.1-sol'], 'task --model gpt-6.1-sol')]:
+        result = subprocess.run([str(wrapper), *args], input='', env=env, text=True, capture_output=True, check=True)
+        assert json.loads(result.stdout)['argv'][-2:] == ['--', expected_task]
+    result = subprocess.run([str(wrapper), '--codex', '--model', 'gpt-6.1-sol', '--effort', 'xhigh', '-'], input=task, env=env, text=True, capture_output=True, check=True)
+    actual = json.loads(result.stdout)
+    assert actual['argv'] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex', '--agent', 'codex', '--model', 'gpt-6.1-sol', '--effort', 'xhigh', '-']
+    for args in [[], ['--claude'], ['--model', 'opus'], ['--agent', 'grok']]:
+        result = subprocess.run([str(wrapper), *args, '-'], input='@claude Explicit inline choice', env=env, text=True, capture_output=True, check=True)
+        actual = json.loads(result.stdout)
+        assert actual['argv'][:7] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex']
+        assert actual['stdin'] == '@claude Explicit inline choice'
+        if args == ['--claude']:
+            assert actual['argv'][7:] == ['--agent', 'claude', '-']
+        else:
+            assert actual['argv'][7:] == [*args, '-']
+print('sow wrapper passed: launch flags, literal arguments, stdin, read-only catalog, help, invalid options.')

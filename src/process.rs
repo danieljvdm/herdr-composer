@@ -73,7 +73,8 @@ pub fn run(
         });
     }
     if let Some(value) = input {
-        let bytes = serde_json::to_vec(value)?;
+        let mut bytes = serde_json::to_vec(value)?;
+        bytes.push(b'\n');
         let mut pipe = child.stdin.take().unwrap();
         thread::spawn(move || {
             let _ = pipe.write_all(&bytes);

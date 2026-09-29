@@ -237,3 +237,21 @@ with tempfile.TemporaryDirectory(prefix='composer-codex-backend-') as tmp:
     assert start_args[start_args.index('--')+1:]==['--strict-config']
     assert json.loads(path.read_text())['delivery']=='Confirmed'
 print('Codex pane backend: ok')
+
+with tempfile.TemporaryDirectory(prefix='composer-agent-preference-') as tmp:
+    root=pathlib.Path(tmp);repo,env=setup(root)
+    (root/'bin/claude').write_text('#!/bin/sh\nexit 0\n')
+    (root/'bin/claude').chmod(0o755)
+    settings='[defaults]\nagent="claude"\nmodel="opus"\neffort="high"\n[agents.claude]\ncatalog="curated"\n'
+    (root/'config/config.toml').write_text(settings)
+    for index, (options, task, expected) in enumerate([
+        ([], 'Use the default', 'codex'),
+        (['--agent', 'claude'], 'Explicit agent', 'claude'),
+        (['--model', 'opus'], 'Explicit model', 'claude'),
+        ([], '@claude Explicit inline agent', 'claude'),
+    ]):
+        run(['launch','--default-agent','codex','--branch',f'preference-{index}',*options,task],env,repo)
+        path=max(records(root),key=lambda p:p.stat().st_mtime_ns)
+        assert json.loads(path.read_text())['request']['agent'] == expected
+    assert (root/'config/config.toml').read_text() == settings
+print('Codex preference preserves explicit agent, model and inline choices: ok')

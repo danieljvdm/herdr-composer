@@ -193,7 +193,7 @@ impl Catalog {
                 a.label = id.clone();
             }
             if a.catalog.is_empty() {
-                a.catalog = if a.kind == "codex" {
+                a.catalog = if matches!(a.kind.as_str(), "codex" | "claude") {
                     "discovery"
                 } else {
                     "curated"
@@ -227,6 +227,7 @@ impl Catalog {
                         Ok(list.models)
                     })(),
                     "discovery" if a.kind == "codex" => discover_codex(id, &mut diagnostics),
+                    "discovery" if a.kind == "claude" => discover_claude(),
                     "discovery" => Err(format!(
                         "{} has no built-in discovery; configure a catalog command",
                         a.kind
@@ -351,6 +352,103 @@ impl Catalog {
         Ok((id, a.clone(), m))
     }
 }
+fn discover_claude() -> Result<Vec<Model>> {
+    // Initialize the SDK control channel only: never send a user message or
+    // request inference. Safe mode prevents hooks/plugins from running during
+    // catalog inspection, and MCP/tools and session persistence are disabled.
+    let output = process::run(
+        &[
+            "claude",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "{\"mcpServers\":{}}",
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--print",
+        ]
+        .map(String::from),
+        Path::new("/"),
+        Some(&serde_json::json!({
+            "type": "control_request", "request_id": "composer-catalog",
+            "request": {"subtype": "initialize"}
+        })),
+        Duration::from_secs(5),
+    )?
+    .checked()?;
+    parse_claude_models(&output)
+}
+
+fn parse_claude_models(output: &str) -> Result<Vec<Model>> {
+    for line in output.lines() {
+        let value: serde_json::Value = serde_json::from_str(line)?;
+        if value["type"] != "control_response"
+            || value["response"]["request_id"] != "composer-catalog"
+        {
+            continue;
+        }
+        let response = &value["response"];
+        if response["subtype"] != "success" {
+            return Err(format!("Claude model query failed: {}", response["error"]).into());
+        }
+        let list = response["response"]["models"]
+            .as_array()
+            .ok_or("Claude discovery has no models")?;
+        if list.is_empty() {
+            return Err("Claude discovery returned no models".into());
+        }
+        let mut models: Vec<Model> = list
+            .iter()
+            .enumerate()
+            .map(|(order, v)| {
+                let id = v["value"].as_str().ok_or("Claude model has no value")?;
+                let efforts = if v["supportsEffort"] == true {
+                    v["supportedEffortLevels"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|e| e.as_str().map(String::from).ok_or("invalid Claude effort"))
+                        .collect::<std::result::Result<Vec<_>, _>>()?
+                } else {
+                    vec![]
+                };
+                Ok(Model {
+                    id: id.into(),
+                    label: v["displayName"].as_str().unwrap_or(id).into(),
+                    order: order as i32,
+                    efforts,
+                    // Claude's fast capability is not advertised until there is a
+                    // native launch adapter for it.
+                    ..Model::default()
+                })
+            })
+            .collect::<Result<_>>()?;
+        let mut ids: HashSet<String> = models.iter().map(|m| m.id.clone()).collect();
+        // Full resolved IDs stay pinnable rather than being rewritten to a
+        // moving native alias. Keep extra entries out of the model picker.
+        for (v, model) in list.iter().zip(models.clone()) {
+            if let Some(id) = v["resolvedModel"].as_str().filter(|s| !s.is_empty()) {
+                if ids.insert(id.into()) {
+                    models.push(Model {
+                        id: id.into(),
+                        order: models.len() as i32,
+                        visible: Some(false),
+                        ..model
+                    });
+                }
+            }
+        }
+        return Ok(models);
+    }
+    Err("Claude discovery has no initialization response".into())
+}
+
 fn discover_codex(id: &str, diagnostics: &mut Vec<String>) -> Result<Vec<Model>> {
     let live = (|| -> Result<Vec<Model>> {
         let output = process::run(

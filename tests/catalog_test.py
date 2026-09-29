@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 
 BINARY = pathlib.Path(__file__).resolve().parents[1] / 'target/debug/herdr-composer'
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='composer-catalog-') as tmp:
     assert result['agents']['codex']['models'][0]['label'] == 'Daily work', result
     assert result['agents']['codex']['models'][0]['efforts'] == ['high'], result
 
-    result = catalog('[agents.codex]\ncatalog="curated"\n[agents.claude]')
+    result = catalog('[agents.codex]\ncatalog="curated"\n[agents.claude]\ncatalog="curated"')
     assert result['agents']['codex']['models'] == [], result
     assert result['agents']['claude']['models'], result
 
@@ -81,5 +82,49 @@ with tempfile.TemporaryDirectory(prefix='composer-catalog-') as tmp:
     result = catalog('[agents.codex]\n[[agents.codex.models]]\nid="configured"')
     assert result['diagnostics'], result
     assert result['agents']['codex']['models'][0]['id'] == 'configured', result
+
+    cli_output(live_models)
+    claude = bin_dir / 'claude'
+    claude_models = [
+        {'value': 'default', 'resolvedModel': 'claude-fixture-opus', 'displayName': 'Default'},
+        {'value': 'opus', 'resolvedModel': 'claude-fixture-opus', 'displayName': 'Latest Opus',
+         'supportsEffort': True, 'supportedEffortLevels': ['high', 'xhigh'], 'supportsFastMode': True},
+        {'value': 'claude-fixture-opus', 'resolvedModel': 'claude-fixture-opus', 'displayName': 'Pinned Opus'},
+        {'value': 'haiku', 'resolvedModel': 'claude-fixture-haiku', 'displayName': 'Haiku'},
+    ]
+    claude.write_text(f'#!{sys.executable}\n' + '''import json,sys
+assert sys.argv[1:] == ['--safe-mode', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', '', '--no-session-persistence', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--print']
+request = json.loads(sys.stdin.readline())
+assert request == {'type': 'control_request', 'request_id': 'composer-catalog', 'request': {'subtype': 'initialize'}}
+assert sys.stdin.read() == ''  # No prompt/inference messages.
+print(json.dumps({'type': 'system', 'subtype': 'status'}))
+''' + 'print(json.dumps(' + repr({'type': 'control_response', 'response': {
+        'subtype': 'success', 'request_id': 'composer-catalog',
+        'response': {'models': claude_models}}}) + '))\n')
+    claude.chmod(0o755)
+    for settings, agent in [('', 'claude'), ('[agents.claude]', 'claude'),
+                            ('[agents.custom]\nkind="claude"', 'custom')]:
+        result = catalog(settings)
+        assert not result['diagnostics'], result
+        entry = result['agents'][agent]
+        assert entry['catalog'] == 'discovery', entry
+        assert [m['id'] for m in entry['models']] == [m['value'] for m in claude_models] + ['claude-fixture-haiku']
+        assert entry['models'][1]['efforts'] == ['high', 'xhigh']
+        assert entry['models'][1]['speeds'] == []
+        assert entry['models'][0]['aliases'] == []  # Resolved ID is its own entry.
+        assert entry['models'][3]['aliases'] == []
+        assert entry['models'][4]['id'] == 'claude-fixture-haiku'
+        assert not entry['models'][4]['visible']
+    result = catalog('[agents.claude]\n[[agents.claude.models]]\nid="opus"\nlabel="Daily"')
+    assert result['agents']['claude']['models'][1]['label'] == 'Daily'
+    assert result['agents']['claude']['models'][1]['efforts'] == ['high', 'xhigh']
+    result = catalog('[agents.claude]\ncatalog="curated"')
+    assert [m['id'] for m in result['agents']['claude']['models']] == ['sonnet', 'opus', 'haiku']
+    for script in ['#!/bin/sh\nexit 2\n', '#!/bin/sh\nprintf invalid\n',
+                   '#!/bin/sh\nprintf \'{"type":"control_response","response":{"request_id":"composer-catalog","subtype":"error","error":"fixture-denied"}}\\n\'\n']:
+        claude.write_text(script)
+        result = catalog('[agents.claude]\n[[agents.claude.models]]\nid="configured"')
+        assert any(d.startswith('claude:') for d in result['diagnostics']), result
+        assert [m['id'] for m in result['agents']['claude']['models']] == ['configured']
 
 print('catalog defaults: ok')

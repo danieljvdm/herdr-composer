@@ -38,13 +38,13 @@ Branch and base overrides require worktree mode; clear saved overrides or switch
 back before launching. Tab cleanup closes its recorded tab without removing Git
 worktrees or changing branches.
 
-Codex uses local model discovery by default. Other agents default to the curated
+Codex and Claude use local model discovery by default. Other agents default to the curated
 catalog. An explicit `catalog` setting overrides this choice:
 
 | `catalog` | Source |
 | --- | --- |
 | `curated` | Shipped [`catalogs/curated.json`](../catalogs/curated.json). Currently includes Claude's native model aliases without assumed effort/speed capabilities. |
-| `discovery` | Queries `codex debug models` with a five-second timeout and 1 MiB output limit. Codex manages catalog refresh. Falls back to `models_cache.json` under CODEX_HOME (normally `~/.codex`) with a diagnostic if the query fails. Other kinds report that built-in discovery is unavailable. |
+| `discovery` | Codex queries `codex debug models` with a five-second timeout and 1 MiB output limit. Falls back to `models_cache.json` under CODEX_HOME (normally `~/.codex`) with a diagnostic if the query fails. Claude queries its SDK initialization control response for selectable models and effort levels, with the same bounds. It sends no task or inference request and disables hooks, plugins, tools, MCP, and session persistence. Claude discovery failures report a diagnostic and retain configured entries without substituting a curated list. Other kinds report that built-in discovery is unavailable. |
 | `command` | `command = ["/absolute/catalog-program", "arg"]`, with versioned JSON stdin/stdout. Five-second timeout and 1 MiB output limits. |
 
 The catalog command receives `{"version":1,"agent":"id","kind":"codex"}` and
@@ -84,6 +84,11 @@ is an explicit setting. Codex maps it to `service_tier="default"`, and Fast to
 `--model` and `--effort`. Other Herdr kinds work with Automatic settings.
 Unknown custom models require an explicit agent and `allow_custom_model=true`;
 they receive no invented effort or speed support.
+
+`sow` supplies `--default-agent codex` to prefer Codex even when Composer's editor
+has another configured default. Explicit agent flags, inline `@agent` directives,
+and model choices retain their usual precedence. This override is scoped to the
+launch and does not change the editor's saved settings.
 
 ## Branch naming
 
