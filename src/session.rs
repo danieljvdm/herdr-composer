@@ -83,6 +83,8 @@ pub struct SessionRecord {
     pub prompt_result: Option<Value>,
     pub draft: Option<(PathBuf, u64)>,
     pub removal: Option<Value>,
+    #[serde(default)]
+    pub codex_thread: Option<String>,
 }
 pub fn path(state: &Path, id: &str) -> Result<PathBuf> {
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
@@ -138,6 +140,7 @@ pub fn submit(
         prompt_result: None,
         draft,
         removal: None,
+        codex_thread: None,
     };
     let mut submission_lock = Some(storage::lock(
         &path(&paths.state, &r.id)?.with_extension("lock"),
@@ -827,6 +830,28 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             }
         }
         let name = format!("c{}", &r.id[..r.id.len().min(25)]);
+        let mut backend_args = Vec::<String>::new();
+        if req.kind == "codex" {
+            if let Some(shared) = &req.shared_codex {
+                r.step = "creating_codex_thread".into();
+                save(state, &r)?;
+                let prepared = crate::codex_shared::prepare(&req, receipt, &r.herdr, shared)?;
+                r.codex_thread = prepared.thread_id.clone();
+                save(state, &r)?;
+                if let Some(error) = prepared.error {
+                    return Err(error.into());
+                }
+                backend_args.extend([
+                    "--remote".into(),
+                    shared.socket.clone(),
+                    "--cd".into(),
+                    receipt.checkout.to_str().ok_or("non-UTF8 checkout")?.into(),
+                ]);
+                backend_args.extend(prepared.routing_args);
+            } else {
+                backend_args.push("--strict-config".into());
+            }
+        }
         let mut args = vec![
             "agent",
             "start",
@@ -840,13 +865,11 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         ];
         if req.kind == "codex" || !req.native_args.is_empty() {
             args.push("--");
-            if req.kind == "codex" {
-                // Strict configuration requires an in-process Codex backend.
-                // An implicit shared daemon cannot inherit this pane's macOS
-                // login session or HERDR_* environment (notably after SSH startup).
-                args.push("--strict-config");
-            }
+            args.extend(backend_args.iter().map(String::as_str));
             args.extend(req.native_args.iter().map(String::as_str));
+            if let Some(thread) = &r.codex_thread {
+                args.extend(["resume", thread]);
+            }
         }
         r.step = "starting_agent".into();
         save(state, &r)?;

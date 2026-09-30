@@ -90,6 +90,83 @@ has another configured default. Explicit agent flags, inline `@agent` directives
 and model choices retain their usual precedence. This override is scoped to the
 launch and does not change the editor's saved settings.
 
+## Shared Codex
+
+Shared mode is optional and has been tested with unmodified Codex **0.159.2**.
+It connects new Composer task agents to an existing local app-server. Model,
+reasoning effort, speed, and checkout are selected separately for each task.
+Without this setting, Composer continues to use `--strict-config`. Branch
+naming remains a separate ephemeral call.
+
+Stock Codex shares its backend environment with hooks and legacy `notify`.
+Composer registers each session's Herdr routing fields before opening an
+explicit `resume <session-id>` client. Its adapter supplies the correct pane
+environment to the original hook or notification command, keeping the original
+input, output, and exit status. Only seven Herdr routing fields are stored, in
+private files; credentials are not copied into them. Shell tools receive the
+same fields through the session's shell environment policy.
+
+After building, configure the adapter against your already running Codex server:
+
+```sh
+python3 scripts/setup-shared-codex.py \
+  --socket unix:///absolute/path/to/app-server.sock \
+  --contexts /absolute/path/to/private/composer-contexts
+```
+
+Setup requires Python 3.11+, an installed Composer binary, enabled Codex hooks
+(`features.hooks = true`), and trusted user
+command hooks in `$CODEX_HOME/hooks.json`. It wraps those commands and the
+existing `notify` argv, preserves hook options, and adds a context-only
+`SubagentStart` hook. It updates trust only for already-trusted commands and
+this known adapter. Original configuration files are backed up under the
+context directory. Setup verifies the running server sees the updates without
+restarting it. Enabled plugin or project command hooks need separate routing
+support; shared launches currently refuse such configurations.
+
+If another file generates `config.toml`, supply its notify source with
+`--notify-policy /path/to/config.shared.toml` and its existing render command
+with `--apply-policy /path/to/codex-config-apply`. This keeps later renders from
+removing the notify adapter. Other configuration managers should preserve
+the adapter's `notify` argv and updated machine-local hook trust records.
+
+Add the verified settings printed by setup to Composer's `config.toml`:
+
+```toml
+[codex.shared]
+socket = "unix:///absolute/path/to/app-server.sock"
+contexts_dir = "/absolute/path/to/private/composer-contexts"
+```
+
+When `config.toml` is synced between machines, put just `socket` and
+`contexts_dir` (without the table header) in the machine-local Composer state
+file `codex-shared.toml` instead. Its default location is
+`~/.local/state/herdr/plugins/composer/codex-shared.toml`; it follows
+`HERDR_PLUGIN_STATE_DIR`, `COMPOSER_STATE_DIR`, or `XDG_STATE_HOME` like other
+Composer state. Configuring both locations is an error. A machine without
+either opt-in continues to use embedded mode.
+
+A stable executable launcher can be supplied as `--binary`; it must forward
+Composer's `__codex-hook` and `__codex-notify` arguments. To migrate an existing
+trusted adapter, also pass `--replace-binary /exact/old/binary`. Setup only
+unwraps adapters at that exact path, with the same context directory, and
+still requires their current commands to be trusted.
+
+The endpoint and context directory are frozen in the saved launch request.
+Composer checks effective hooks and notify before creating a session. A
+changed adapter, unavailable server, or preparation failure stops the launch
+before task delivery. Any created Codex session ID remains in the session
+record as `codex_thread`; failures never cause automatic prompt replay.
+
+Remove `[codex.shared]` or the local `codex-shared.toml` to use embedded mode for future submissions. Queued
+requests retain their chosen backend. Wrappers pass unrelated embedded
+sessions through with their inherited environment. Keep the adapters and
+private routing records while shared sessions may still run or be resumed;
+they also route native children and a root session resumed in another Herdr
+pane. Opening the same session in multiple Herdr clients refuses ambiguous
+routing. Restore the original configuration backup when no shared sessions
+need the adapter. No Codex executable or source changes are required.
+
 ## Branch naming
 
 Model-generated branch names are optional and use a separate Codex call. Configure

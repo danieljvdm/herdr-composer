@@ -87,10 +87,10 @@ literal option arguments, for example `sow -- 'catalog --json'`.
 Sow defaults to Codex; explicit agents and model choices take precedence.
 Claude and Codex model choices are discovered from their installed CLIs.
 
-Composer launches Codex with `--strict-config` so it runs its backend in the
-pane's process instead of reusing an implicit shared app-server daemon. This
-preserves the pane's `HERDR_*` environment and macOS login-session access to
-Keychain. Codex will report unrecognized configuration keys at startup.
+By default, Composer launches Codex with `--strict-config`, keeping its backend
+in the pane's process and preserving the pane's environment. You can opt into
+[shared Codex](docs/configuration.md#shared-codex) while keeping per-task model,
+reasoning, and speed choices. This uses stock Codex and a Composer hook adapter.
 
 To generate branch names with a separate model, enable
 [`branch_naming`](docs/configuration.md#branch-naming). Its model, effort, speed,

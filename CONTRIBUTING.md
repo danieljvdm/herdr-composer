@@ -24,6 +24,7 @@ python3 tests/acceptance.py
 python3 tests/composer_pty_test.py
 python3 tests/import_test.py
 python3 tests/sow_test.py
+python3 tests/codex_shared_test.py
 ```
 
 The Rust tests cover request resolution, catalogs, draft conflicts, image import,
@@ -47,6 +48,13 @@ sent the task into that dialog. It requires an actual agent reply and checks
 that the preparation pane closes while the task pane stays open. It exercises both providers,
 checks dirty-checkout refusal and unmerged-branch retention, and removes the
 task checkouts. Stop the named test session when finished.
+
+For shared Codex changes, also run `python3 tests/shared_codex_live.py`. It owns
+a disposable named Herdr server, a private Codex home, and a localhost mock
+model provider. It uses the installed, unmodified Codex executable, exercises
+three clients with different settings, both worktree providers, hooks, notify, shell tools, delivery and
+cleanup, then stops only its own services. It makes no paid inference requests
+and leaves fixture files in the temporary directory for inspection.
 
 ## Code map
 

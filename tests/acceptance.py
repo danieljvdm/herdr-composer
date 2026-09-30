@@ -4,7 +4,9 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 BINARY=ROOT/'target/debug/herdr-composer'
 
 def run(args,env,cwd,input=None,ok=True):
-    p=subprocess.run([str(BINARY),*args],env=env,cwd=cwd,input=input,text=True,capture_output=True,timeout=20)
+    # A runner includes naming, provider preparation and readiness polls;
+    # allow more time than any one of its individually bounded commands.
+    p=subprocess.run([str(BINARY),*args],env=env,cwd=cwd,input=input,text=True,capture_output=True,timeout=60)
     if ok: assert p.returncode==0,(args,p.stdout,p.stderr)
     else: assert p.returncode!=0,(args,p.stdout,p.stderr)
     return p
@@ -35,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     # Native path works without Worktrunk, fzf, jq, or gh on PATH.
     (root/'bin/wt').unlink()
     path,id=launch(root,repo,env)
-    old=json.loads(path.read_text());old['request'].pop('branch_naming');path.write_text(json.dumps(old));saved_config=(root/'config/config.toml').read_text();(root/'config/config.toml').write_text('[agents.codex]\nenabled=false\n');run(['__run',id],env,repo);(root/'config/config.toml').write_text(saved_config)
+    old=json.loads(path.read_text());old['request'].pop('branch_naming');old['request'].pop('shared_codex');old.pop('codex_thread');path.write_text(json.dumps(old));saved_config=(root/'config/config.toml').read_text();(root/'config/config.toml').write_text('[agents.codex]\nenabled=false\n');run(['__run',id],env,repo);(root/'config/config.toml').write_text(saved_config)
     record=json.loads(path.read_text());assert record['delivery']=='Confirmed';assert json.loads((root/'prompt.json').read_text())==record['request']['task']
     assert not any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
     assert any(t['pane_id']==record['receipt']['pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])

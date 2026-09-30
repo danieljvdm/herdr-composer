@@ -1,5 +1,6 @@
 pub mod branch_name;
 pub mod catalog;
+pub mod codex_shared;
 pub mod config;
 pub mod images;
 pub mod import;

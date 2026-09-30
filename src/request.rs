@@ -103,6 +103,8 @@ pub struct TaskRequest {
     pub effort: Option<String>,
     pub speed: Option<String>,
     pub native_args: Vec<String>,
+    #[serde(default)]
+    pub shared_codex: Option<crate::config::SharedCodex>,
     pub focus: bool,
     pub attachments: Vec<Attachment>,
     pub diagnostics: Vec<String>,
@@ -514,6 +516,10 @@ pub fn resolve(
         && inline.branch.is_empty()
         && suggestion.branch.is_empty())
     .then(|| c.branch_naming.clone());
+    let shared_codex = c.codex.shared.clone().filter(|_| a.kind == "codex");
+    if let Some(shared) = &shared_codex {
+        crate::codex_shared::validate(shared)?;
+    }
     Ok(TaskRequest {
         version: VERSION,
         launch_id: id,
@@ -533,6 +539,7 @@ pub fn resolve(
         effort,
         speed,
         native_args,
+        shared_codex,
         focus: d.focus.or(suggestion.focus).unwrap_or(c.defaults.focus),
         attachments,
         diagnostics,

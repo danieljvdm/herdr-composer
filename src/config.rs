@@ -43,6 +43,17 @@ pub struct BranchNaming {
     pub speed: String,
     pub prefix: String,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedCodex {
+    pub socket: String,
+    pub contexts_dir: PathBuf,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Codex {
+    pub shared: Option<SharedCodex>,
+}
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -52,6 +63,7 @@ pub struct Config {
     pub providers: BTreeMap<String, Provider>,
     pub prose_resolver: Vec<String>,
     pub branch_naming: BranchNaming,
+    pub codex: Codex,
 }
 #[derive(Clone)]
 pub struct Paths {
@@ -109,10 +121,65 @@ impl Paths {
         Self { config, state }
     }
     pub fn load(&self) -> Result<Config> {
-        match fs::read_to_string(self.config.join("config.toml")) {
-            Ok(s) => Ok(toml::from_str(&s)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(e) => Err(e.into()),
+        let mut config: Config = match fs::read_to_string(self.config.join("config.toml")) {
+            Ok(s) => toml::from_str(&s)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(e) => return Err(e.into()),
+        };
+        // A socket and its verified adapter state belong to this machine. Keep
+        // this opt-in outside a config.toml managed by shared dotfiles.
+        match fs::read_to_string(self.state.join("codex-shared.toml")) {
+            Ok(s) => {
+                if config.codex.shared.is_some() {
+                    return Err(
+                        "shared Codex is configured in both config.toml and local state".into(),
+                    );
+                }
+                config.codex.shared = Some(toml::from_str(&s)?);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
+        Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_backend_activation_stays_machine_local() {
+        let root = env::temp_dir().join(format!("composer-config-{}", crate::request::launch_id()));
+        let paths = Paths {
+            config: root.join("config"),
+            state: root.join("state"),
+        };
+        fs::create_dir_all(&paths.config).unwrap();
+        fs::create_dir_all(&paths.state).unwrap();
+        fs::write(
+            paths.config.join("config.toml"),
+            "[defaults]\nagent='codex'\n",
+        )
+        .unwrap();
+        assert!(paths.load().unwrap().codex.shared.is_none());
+        let shared = "socket='unix:///tmp/server.sock'\ncontexts_dir='/tmp/contexts'\n";
+        fs::write(paths.state.join("codex-shared.toml"), shared).unwrap();
+        let config = paths.load().unwrap();
+        assert_eq!(config.defaults.agent, "codex");
+        assert_eq!(
+            config.codex.shared.unwrap().socket,
+            "unix:///tmp/server.sock"
+        );
+        fs::write(paths.state.join("codex-shared.toml"), "socket=1").unwrap();
+        assert!(paths.load().is_err());
+        fs::write(paths.state.join("codex-shared.toml"), shared).unwrap();
+        fs::write(
+            paths.config.join("config.toml"),
+            format!("[codex.shared]\n{shared}"),
+        )
+        .unwrap();
+        assert!(paths.load().is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }
