@@ -660,7 +660,7 @@ fn codex_input_prompt_visible(screen: &str) -> bool {
 }
 
 fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) -> Result<()> {
-    let mut reported_blocker = false;
+    let mut reported_status = String::new();
     let mut prompt_seen = 0;
     loop {
         let live = h.call(&["agent", "get", name])?;
@@ -677,7 +677,13 @@ fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) ->
                 "Herdr did not return Codex readiness evidence; task has not been sent".into(),
             );
         }
-        if detection["state"] == "idle" && agent["interactive_ready"] == true {
+        let screen = h
+            .output(&["pane", "read", pane, "--source", "detection"])?
+            .checked()?;
+        if (detection["state"] == "idle" || detection["state"] == "unknown")
+            && agent["interactive_ready"] == true
+            && detection["visible_blocker"] != true
+        {
             if detection["visible_idle"] == true {
                 return Ok(());
             }
@@ -686,9 +692,6 @@ fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) ->
             // Require the input line and Ready footer at the bottom of the
             // live screen on consecutive polls, never an earlier scrollback
             // prompt that a startup dialog might have covered.
-            let screen = h
-                .output(&["pane", "read", pane, "--source", "detection"])?
-                .checked()?;
             if codex_input_prompt_visible(&screen) {
                 prompt_seen += 1;
                 if prompt_seen >= 2 {
@@ -700,16 +703,61 @@ fn wait_for_codex_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) ->
         } else {
             prompt_seen = 0;
         }
-        if !reported_blocker
-            && (detection["state"] == "blocked" || agent["agent_status"] == "blocked")
-        {
-            println!("Codex requires input in pane {pane}. Resolve its startup dialog to continue; the task has not been sent.");
-            reported_blocker = true;
+        let status = codex_wait_status(&screen, &detection);
+        if status != reported_status {
+            println!("{status} in pane {pane}; the Composer task has not been sent.");
+            reported_status = status.into();
         }
         if Instant::now() >= deadline {
-            return Err(format!("Codex is not ready for task input in pane {pane}; task has not been sent. Inspect its startup dialog").into());
+            return Err(format!("Timed out waiting for task input in pane {pane}: {status}. The Composer task has not been sent; inspect that pane before resuming").into());
         }
         std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn codex_wait_status(screen: &str, detection: &Value) -> &'static str {
+    if screen.contains("Trust this folder?")
+        || screen.contains("Do you trust the contents of this directory?")
+    {
+        "Codex needs folder trust approval"
+    } else if detection["state"] == "blocked" || detection["visible_blocker"] == true {
+        "Codex requires input"
+    } else if detection["state"] == "working" {
+        "Codex is already working"
+    } else {
+        "Waiting for Codex input readiness"
+    }
+}
+
+fn report_destination(r: &SessionRecord) {
+    if let Some(receipt) = &r.receipt {
+        println!(
+            "Task workspace: {} ({}). Directory: {}. Pane: {}",
+            receipt.branch,
+            receipt.workspace.as_deref().unwrap_or("unknown"),
+            receipt.checkout.display(),
+            receipt.pane.as_deref().unwrap_or("unknown"),
+        );
+    }
+}
+
+fn mark_runner_needs_attention(r: &SessionRecord) {
+    let (Some(source), Some(pane)) = (&r.source_workspace, &r.runner_pane) else {
+        return;
+    };
+    // Keep the failure output available, but stop presenting an exited runner
+    // as ongoing preparation. Only rename the tab that owns our recorded pane.
+    if let Ok(panes) = r.herdr.call(&["pane", "list", "--workspace", source]) {
+        if let Some(tab) = panes["result"]["panes"].as_array().and_then(|panes| {
+            panes
+                .iter()
+                .find(|live| live["pane_id"] == *pane)
+                .and_then(|live| live["tab_id"].as_str())
+        }) {
+            let _ = r
+                .herdr
+                .call(&["tab", "rename", tab, "Composer needs attention"]);
+        }
     }
 }
 
@@ -811,6 +859,7 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             }
         }
         prepare(state, &mut r)?;
+        report_destination(&r);
         let req = r.request.as_ref().unwrap().clone();
         let receipt = r.receipt.as_ref().unwrap();
         let pane = receipt
@@ -861,7 +910,13 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             "--pane",
             &pane,
             "--timeout",
-            "300000",
+            // Codex's own readiness loop reports dialogs within the same
+            // overall budget instead of hiding them in agent start's wait.
+            if req.kind == "codex" {
+                "5000"
+            } else {
+                "300000"
+            },
         ];
         if req.kind == "codex" || !req.native_args.is_empty() {
             args.push("--");
@@ -908,6 +963,8 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
     if let Err(e) = result {
         r.error = Some(e.to_string());
         save(state, &r)?;
+        mark_runner_needs_attention(&r);
+        report_destination(&r);
         return Err(format!(
             "Session {id} needs attention: {e}. Workspace {:?}; inspect {}. No automatic retry.",
             r.receipt.as_ref().and_then(|p| p.workspace.as_ref()),
@@ -947,6 +1004,7 @@ pub fn resume(state: &Path, id: &str) -> Result<()> {
         .and_then(|receipt| receipt.pane.clone())
         .ok_or("session has no prepared pane")?;
     let name = format!("c{}", &r.id[..r.id.len().min(25)]);
+    report_destination(&r);
     let result = wait_for_codex_input(
         &r.herdr,
         &name,
@@ -957,6 +1015,7 @@ pub fn resume(state: &Path, id: &str) -> Result<()> {
     if let Err(error) = result {
         r.error = Some(error.to_string());
         save(state, &r)?;
+        mark_runner_needs_attention(&r);
         return Err(format!("Session {id} needs attention: {error}").into());
     }
     drop(lock);
@@ -1253,7 +1312,29 @@ pub fn remove(state: &Path, id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod readiness_tests {
-    use super::codex_input_prompt_visible;
+    use super::{codex_input_prompt_visible, codex_wait_status};
+    use serde_json::json;
+
+    #[test]
+    fn distinguishes_trust_dialogs_from_working_agents() {
+        for screen in [
+            "Folder access\nTrust this folder?\n1. Trust and continue",
+            "Do you trust the contents of this directory?",
+        ] {
+            assert_eq!(
+                codex_wait_status(screen, &json!({"state": "unknown"})),
+                "Codex needs folder trust approval"
+            );
+        }
+        assert_eq!(
+            codex_wait_status("", &json!({"state": "working"})),
+            "Codex is already working"
+        );
+        assert_eq!(
+            codex_wait_status("", &json!({"state": "blocked"})),
+            "Codex requires input"
+        );
+    }
 
     #[test]
     fn recognizes_both_codex_prompt_markers() {

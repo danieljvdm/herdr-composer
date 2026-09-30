@@ -55,6 +55,8 @@ try:
             emit({'tab':t,'root_pane':{'pane_id':t['pane_id']}})
         elif command==['tab','list']: emit({'tabs':[t for t in state['tabs'] if flag('--workspace') in [None,t['workspace_id']]]})
         elif command==['tab','focus']: emit({'type':'tab_focused'})
+        elif command==['tab','rename']:
+            next(t for t in state['tabs'] if t['tab_id']==args[2])['label']=' '.join(args[3:]);emit({'type':'tab_renamed'})
         elif command==['tab','close']:
             if os.environ.get('FIXTURE_CLOSE_FAIL'): raise RuntimeError('close failed')
             state['tabs']=[t for t in state['tabs'] if t['tab_id']!=args[2]];emit({'type':'tab_closed'})
@@ -111,6 +113,8 @@ try:
             # A false idle is followed by a trust dialog. Only after the user
             # resolves it does positive idle evidence permit the task.
             result={'agent':'codex','state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3 and not os.environ.get('FIXTURE_VISIBLE_IDLE_FALLBACK')}
+            if poll>=3 and os.environ.get('FIXTURE_UNKNOWN_READY'):
+                result.update(state='unknown',visible_idle=False)
             if os.environ.get('FIXTURE_READY_INVALID'):result.pop('visible_idle')
             state_path.write_text(json.dumps(state));print(json.dumps(result))
         elif command==['agent','prompt']:

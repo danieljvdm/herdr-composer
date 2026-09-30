@@ -15,7 +15,10 @@ Records distinguish NotSent, Unknown, and Confirmed delivery. Herdr startup runs
 once and waits for readiness. For Codex, Composer requires Herdr's positive
 idle detection evidence or a stable input prompt and Ready footer on the live
 screen. Herdr's fallback idle state alone is insufficient during startup.
-Startup has a five-minute budget. If Codex shows a trust or other startup dialog,
+The preparation pane prints the destination branch, workspace, directory, and
+pane before starting the agent. Startup has a five-minute budget; after a short
+initial startup check, Composer reports changes in its waiting state, including
+folder trust approval and an agent that is already working. If Codex shows a trust or other startup dialog,
 resolve it in the task pane; Composer keeps the task pending and continues when
 Codex is ready. It never answers the dialog itself. The prompt runs once with a bounded lifecycle
 wait. A delivery-attempt marker precedes input. Only `agent_prompted` confirms
@@ -31,7 +34,8 @@ consumes Herdr's Enter key without submitting. The saved task remains unchanged;
 Composer still makes only one prompt attempt.
 
 After confirmed delivery and draft cleanup, the runner closes its preparation
-pane. Failures leave it open for inspection. Closing this pane does not close
+pane. Failures leave it open for inspection and rename its tab to
+`Composer needs attention`. Closing this pane does not close
 the task's pane or other panes added to the preparation tab.
 
 On failure, open the workspace named in the record and inspect its runner/agent.

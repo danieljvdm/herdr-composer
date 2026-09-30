@@ -86,21 +86,31 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
     # Delivery failure is never treated as confirmed and never automatically resent.
     # A startup dialog can be resolved without restarting the named agent.
     path,id=launch(root,repo,env);before=len(calls(root))
-    run(['__run',id],dict(env,FIXTURE_START_BLOCKED='1'),repo)
+    output=run(['__run',id],dict(env,FIXTURE_START_BLOCKED='1'),repo)
     assert json.loads(path.read_text())['delivery']=='Confirmed'
+    assert 'Task workspace:' in output.stdout and json.loads(path.read_text())['receipt']['checkout'] in output.stdout
     assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','start']])==1
+    start=next(c[1] for c in calls(root)[before:] if c[1][:2]==['agent','start'])
+    assert start[start.index('--timeout')+1]=='5000'
     # Herdr can report fallback idle without visible_idle while Codex's
     # current input line and Ready footer are plainly visible.
     for marker in ['›','»']:
         path,id=launch(root,repo,env);before=len(calls(root))
         run(['__run',id],dict(env,FIXTURE_VISIBLE_IDLE_FALLBACK='1',FIXTURE_PROMPT_MARKER=marker),repo)
         assert json.loads(path.read_text())['delivery']=='Confirmed'
-        assert len([c for c in calls(root)[before:] if c[1][:2]==['pane','read']])==3
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['pane','read']])==4
         assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
+    # A current Ready screen also permits delivery when detection is unknown.
+    path,id=launch(root,repo,env);before=len(calls(root))
+    run(['__run',id],dict(env,FIXTURE_UNKNOWN_READY='1'),repo)
+    assert json.loads(path.read_text())['delivery']=='Confirmed'
+    assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
     for condition in ['FIXTURE_IDENTITY_CHANGED','FIXTURE_READY_INVALID']:
         path,id=launch(root,repo,env);before=len(calls(root))
         run(['__run',id],dict(env,**{condition:'1'}),repo,ok=False)
         record=json.loads(path.read_text());assert record['delivery']=='NotSent' and record['error']
+        runner=next(t for t in json.loads((root/'herdr.json').read_text())['tabs'] if t['pane_id']==record['runner_pane'])
+        assert runner['label']=='Composer needs attention'
         assert not any(c[1][:2] in [['agent','prompt'],['pane','close']] for c in calls(root)[before:])
         before=len(calls(root))
         run(['resume','--session',id],dict(env,FIXTURE_VISIBLE_IDLE_FALLBACK='1',FIXTURE_PROMPT_MARKER='»'),repo)
