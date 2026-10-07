@@ -14,7 +14,7 @@ def setup(root):
     repo=root/'repo';repo.mkdir();subprocess.run(['git','init','-b','main',str(repo)],check=True,capture_output=True)
     subprocess.run(['git','-C',str(repo),'-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-m','initial'],check=True,capture_output=True)
     bin=root/'bin';bin.mkdir()
-    for name in ['herdr','wt','codex']:
+    for name in ['herdr','wt','codex','claude']:
         shutil.copy(ROOT/'tests/fixture_tool.py',bin/name);(bin/name).chmod(0o755)
     for name in ['git','python3']: (bin/name).symlink_to(shutil.which(name))
     config=root/'config';config.mkdir();(config/'config.toml').write_text('[defaults]\nagent="codex"\n[agents.codex]\nallow_custom_model=true\n[[agents.codex.models]]\nid="fixture-model"\naliases=["daily"]\nefforts=["low","high"]\nspeeds=["normal","fast"]\n')
@@ -117,10 +117,54 @@ with tempfile.TemporaryDirectory(prefix='composer-acceptance-') as tmp:
         assert json.loads(path.read_text())['delivery']=='Confirmed'
         assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
         assert not any(c[1][:2]==['agent','start'] for c in calls(root)[before:])
+    # Claude keeps its task pending through workspace trust, including a
+    # detector that incorrectly reports idle while the trust dialog is visible.
+    with (root/'config/config.toml').open('a') as f:
+        f.write('\n[agents.claude]\ncatalog="curated"\n')
+    for condition in [None, 'FIXTURE_START_BLOCKED', 'FIXTURE_TRUST_FALSE_IDLE']:
+        task='Claude task with `literal` text\n日本語\n\n'
+        run(['launch','--agent','claude','-'],env,repo,task)
+        path=max(records(root),key=lambda p:p.stat().st_mtime_ns)
+        id=json.loads(path.read_text())['id'];before=len(calls(root))
+        case_env=dict(env,**({condition:'1'} if condition else {}))
+        output=run(['__run',id],case_env,repo)
+        record=json.loads(path.read_text())
+        assert record['delivery']=='Confirmed' and record['request']['task']==task
+        assert 'Claude needs folder trust approval' in output.stdout
+        assert json.loads((root/'prompt.json').read_text())==task
+        assert run(['task','--session',id],env,repo).stdout==task
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','start']])==1
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
+        assert not any(c[1][:2]==['agent','send-keys'] for c in calls(root)[before:])
+        run(['resume','--session',id],env,repo,ok=False)
+    # Resume an unsent Claude startup, including records left by older builds
+    # before they saved the agent identity after agent_not_ready.
+    for old_step in ['agent_started','starting_agent']:
+        run(['launch','--agent','claude','Resume after trust'],env,repo)
+        path=max(records(root),key=lambda p:p.stat().st_mtime_ns)
+        id=json.loads(path.read_text())['id']
+        output=run(['__run',id],dict(env,FIXTURE_START_BLOCKED='1',FIXTURE_READY_INVALID='1'),repo,ok=False)
+        assert f'herdr-composer task --session {id}' in output.stderr
+        record=json.loads(path.read_text());assert record['delivery']=='NotSent'
+        record['step']=old_step
+        if old_step=='starting_agent':record['agent']=None
+        path.write_text(json.dumps(record))
+        # Recovery still checks the current named process and refuses a replacement.
+        before=len(calls(root))
+        run(['resume','--session',id],dict(env,FIXTURE_IDENTITY_CHANGED='1'),repo,ok=False)
+        assert not any(c[1][:2]==['agent','prompt'] for c in calls(root)[before:])
+        before=len(calls(root))
+        run(['resume','--session',id],env,repo)
+        assert json.loads(path.read_text())['delivery']=='Confirmed'
+        assert len([c for c in calls(root)[before:] if c[1][:2]==['agent','prompt']])==1
+        assert not any(c[1][:2]==['agent','start'] for c in calls(root)[before:])
     for code,expected in [('agent_blocked','NotSent'),('agent_prompt_stalled','Unknown'),('timeout','Unknown')]:
         path,id=launch(root,repo,env);run(['__run',id],dict(env,FIXTURE_PROMPT_FAIL=code),repo,ok=False)
         record=json.loads(path.read_text());assert record['delivery']==expected
         assert any(t['pane_id']==record['runner_pane'] for t in json.loads((root/'herdr.json').read_text())['tabs'])
+        before=len(calls(root))
+        run(['resume','--session',id],env,repo,ok=False)
+        assert not any(c[1][:2]==['agent','prompt'] for c in calls(root)[before:])
         run(['__run',id],env,repo,ok=False);run(['remove','--session',id],env,repo)
     # Failed runner closure cannot replay delivery or leave a stale record lock.
     path,id=launch(root,repo,env);run(['__run',id],dict(env,FIXTURE_CLOSE_FAIL='1'),repo,ok=False)

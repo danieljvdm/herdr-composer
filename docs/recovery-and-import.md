@@ -12,15 +12,20 @@ the submitted task and image references, including on setup or delivery failure.
 Failures before handoff leave the draft in the editor.
 
 Records distinguish NotSent, Unknown, and Confirmed delivery. Herdr startup runs
-once and waits for readiness. For Codex, Composer requires Herdr's positive
+once and waits for readiness. For Claude, Composer requires positive idle
+detection, interactive readiness,
+and no visible trust dialog, blocker, or active work before sending the task.
+For Codex, Composer requires Herdr's positive
 idle detection evidence or a stable input prompt and Ready footer on the live
 screen. Herdr's fallback idle state alone is insufficient during startup.
 The preparation pane prints the destination branch, workspace, directory, and
 pane before starting the agent. Startup has a five-minute budget; after a short
 initial startup check, Composer reports changes in its waiting state, including
-folder trust approval and an agent that is already working. If Codex shows a trust or other startup dialog,
+folder trust approval and an agent that is already working. If Claude or Codex
+shows a trust or other startup dialog,
 resolve it in the task pane; Composer keeps the task pending and continues when
-Codex is ready. It never answers the dialog itself. The prompt runs once with a bounded lifecycle
+the agent is ready. It never answers the dialog itself. The prompt runs once
+with a bounded lifecycle
 wait. A delivery-attempt marker precedes input. Only `agent_prompted` confirms
 delivery. It also clears the submitted draft revision if handoff did not already
 clear it; newer drafts are preserved. `agent_blocked` rejects input;
@@ -38,13 +43,27 @@ pane. Failures leave it open for inspection and rename its tab to
 `Composer needs attention`. Closing this pane does not close
 the task's pane or other panes added to the preparation tab.
 
-On failure, open the workspace named in the record and inspect its runner/agent.
+On failure, the preparation pane prints recovery commands. Retrieve the original
+prompt without reading JSON:
+
+```sh
+herdr-composer task --session ID
+herdr-composer task --session ID > recovered-task.txt
+```
+
+This prints the saved prompt exactly, preserving whitespace; retained image
+references remain in the session record.
+
+Open the workspace named in the record and inspect its runner/agent.
 For an approval dialog, resolve it yourself. For Unknown delivery, inspect
-before manually sending the task. A failed session with `agent_started`,
-`NotSent`, and no prompt attempt can be retried explicitly with
+before manually sending the task. A failed Claude or Codex session with
+`starting_agent` or `agent_started`,
+`NotSent`, and no prompt attempt can be continued explicitly with
 `herdr-composer resume --session ID`. This checks the same named agent and pane
 before its single prompt attempt; it does not restart the workspace or agent.
-Composer has no automatic resume, resend, or rollback. If cleanup was refused
+This also supports Claude sessions left at `starting_agent` by older Composer
+versions when workspace trust blocked startup. Composer has no automatic
+resume, resend, or rollback. If cleanup was refused
 because of dirty work, save that work and run
 removal again. A timeout during removal requires provider inspection. If
 provider removal succeeded but workspace closure failed, rerun removal from

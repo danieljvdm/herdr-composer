@@ -729,6 +729,72 @@ fn codex_wait_status(screen: &str, detection: &Value) -> &'static str {
     }
 }
 
+fn wait_for_claude_input(h: &Herdr, name: &str, pane: &str, deadline: Instant) -> Result<()> {
+    let mut reported_status = String::new();
+    loop {
+        let live = h.call(&["agent", "get", name])?;
+        let agent = &live["result"]["agent"];
+        if agent["pane_id"] != pane || agent["agent"] != "claude" || agent["name"] != name {
+            return Err("Claude startup identity changed; task has not been sent".into());
+        }
+        let detection = h.call(&["agent", "explain", name, "--json"])?;
+        if detection["agent"] != "claude" || !detection["visible_idle"].is_boolean() {
+            return Err(
+                "Herdr did not return Claude readiness evidence; task has not been sent".into(),
+            );
+        }
+        let screen = h
+            .output(&["pane", "read", pane, "--source", "detection"])?
+            .checked()?;
+        let status = claude_wait_status(&screen, &detection);
+        // A fallback idle state can precede the trust dialog. Only positive
+        // evidence of an idle input prompt permits delivery, without typing
+        // into the dialog or accepting trust on the user's behalf.
+        if detection["state"] == "idle"
+            && detection["visible_idle"] == true
+            && detection["visible_blocker"] != true
+            && detection["visible_working"] != true
+            && agent["interactive_ready"] == true
+            && status != "Claude needs folder trust approval"
+        {
+            return Ok(());
+        }
+        if status != reported_status {
+            println!("{status} in pane {pane}; the Composer task has not been sent.");
+            reported_status = status.into();
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("Timed out waiting for task input in pane {pane}: {status}. The Composer task has not been sent; inspect that pane before resuming").into());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn claude_wait_status(screen: &str, detection: &Value) -> &'static str {
+    let screen = screen.to_lowercase();
+    if screen.contains("trust this folder")
+        || screen.contains("trust the files in this folder")
+        || screen.contains("trust the contents of this directory")
+        || screen.contains("yes, i trust this folder")
+    {
+        "Claude needs folder trust approval"
+    } else if detection["state"] == "blocked" || detection["visible_blocker"] == true {
+        "Claude requires input"
+    } else if detection["state"] == "working" || detection["visible_working"] == true {
+        "Claude is already working"
+    } else {
+        "Waiting for Claude input readiness"
+    }
+}
+
+fn wait_for_input(h: &Herdr, kind: &str, name: &str, pane: &str, deadline: Instant) -> Result<()> {
+    match kind {
+        "codex" => wait_for_codex_input(h, name, pane, deadline),
+        "claude" => wait_for_claude_input(h, name, pane, deadline),
+        _ => Ok(()),
+    }
+}
+
 fn report_destination(r: &SessionRecord) {
     if let Some(receipt) = &r.receipt {
         println!(
@@ -739,6 +805,24 @@ fn report_destination(r: &SessionRecord) {
             receipt.pane.as_deref().unwrap_or("unknown"),
         );
     }
+}
+
+fn can_resume(r: &SessionRecord) -> bool {
+    matches!(r.step.as_str(), "starting_agent" | "agent_started")
+        && r.delivery == Delivery::NotSent
+        && r.prompt_result.is_none()
+        && r.error.is_some()
+        && r.request
+            .as_ref()
+            .is_some_and(|req| matches!(req.kind.as_str(), "codex" | "claude"))
+}
+
+fn recovery_instructions(r: &SessionRecord) -> String {
+    let mut instructions = format!("Recover prompt: herdr-composer task --session {}", r.id);
+    if can_resume(r) {
+        instructions.push_str(&format!("\nAfter resolving startup dialogs, resume the unsent task: herdr-composer resume --session {}", r.id));
+    }
+    instructions
 }
 
 fn mark_runner_needs_attention(r: &SessionRecord) {
@@ -910,9 +994,9 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
             "--pane",
             &pane,
             "--timeout",
-            // Codex's own readiness loop reports dialogs within the same
+            // Composer's own readiness loop reports dialogs within the same
             // overall budget instead of hiding them in agent start's wait.
-            if req.kind == "codex" {
+            if matches!(req.kind.as_str(), "codex" | "claude") {
                 "5000"
             } else {
                 "300000"
@@ -930,7 +1014,7 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         save(state, &r)?;
         let deadline = Instant::now() + Duration::from_secs(300);
         let output = r.herdr.output(&args)?;
-        let startup_blocked = req.kind == "codex"
+        let startup_blocked = matches!(req.kind.as_str(), "codex" | "claude")
             && !output.success
             && serde_json::from_str::<Value>(&output.stderr)
                 .is_ok_and(|v| v["error"]["code"] == "agent_not_ready");
@@ -949,14 +1033,18 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         r.agent = Some(started["result"]["agent"].clone());
         if started["result"]["agent"]["pane_id"] != pane
             || started["result"]["agent"]["agent"] != req.kind
+            || started["result"]["agent"]["name"] != name
         {
             return Err("agent startup returned a different live identity".into());
         }
         r.step = "agent_started".into();
         save(state, &r)?;
-        if req.kind == "codex" {
-            println!("Waiting for Codex input readiness in pane {pane}; resolve any startup dialogs there.");
-            wait_for_codex_input(&r.herdr, &name, &pane, deadline)?;
+        if matches!(req.kind.as_str(), "codex" | "claude") {
+            println!(
+                "Waiting for {} input readiness in pane {pane}; resolve any startup dialogs there.",
+                req.kind
+            );
+            wait_for_input(&r.herdr, &req.kind, &name, &pane, deadline)?;
         }
         deliver(state, &mut r, &pane)
     })();
@@ -966,9 +1054,10 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
         mark_runner_needs_attention(&r);
         report_destination(&r);
         return Err(format!(
-            "Session {id} needs attention: {e}. Workspace {:?}; inspect {}. No automatic retry.",
+            "Session {id} needs attention: {e}. Workspace {:?}; inspect {}. No automatic retry.\n{}",
             r.receipt.as_ref().and_then(|p| p.workspace.as_ref()),
-            path(state, id)?.display()
+            path(state, id)?.display(),
+            recovery_instructions(&r),
         )
         .into());
     }
@@ -987,17 +1076,12 @@ pub fn run(state: &Path, id: &str) -> Result<()> {
 pub fn resume(state: &Path, id: &str) -> Result<()> {
     let lock = storage::lock(&path(state, id)?.with_extension("lock"))?;
     let mut r = load(state, id)?;
-    if r.step != "agent_started"
-        || r.delivery != Delivery::NotSent
-        || r.prompt_result.is_some()
-        || r.error.is_none()
-    {
-        return Err("Only a failed, unsent Codex startup can be resumed".into());
+    if !can_resume(&r) {
+        return Err("Only a failed, unsent startup with no prompt attempt can be resumed".into());
     }
     let req = r.request.as_ref().ok_or("session has no task")?;
-    if req.kind != "codex" {
-        return Err("resume requires a Codex session".into());
-    }
+    let kind = req.kind.clone();
+    validate_binding(&r)?;
     let pane = r
         .receipt
         .as_ref()
@@ -1005,8 +1089,9 @@ pub fn resume(state: &Path, id: &str) -> Result<()> {
         .ok_or("session has no prepared pane")?;
     let name = format!("c{}", &r.id[..r.id.len().min(25)]);
     report_destination(&r);
-    let result = wait_for_codex_input(
+    let result = wait_for_input(
         &r.herdr,
+        &kind,
         &name,
         &pane,
         Instant::now() + Duration::from_secs(30),
@@ -1312,7 +1397,7 @@ pub fn remove(state: &Path, id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod readiness_tests {
-    use super::{codex_input_prompt_visible, codex_wait_status};
+    use super::{claude_wait_status, codex_input_prompt_visible, codex_wait_status};
     use serde_json::json;
 
     #[test]
@@ -1333,6 +1418,28 @@ mod readiness_tests {
         assert_eq!(
             codex_wait_status("", &json!({"state": "blocked"})),
             "Codex requires input"
+        );
+    }
+
+    #[test]
+    fn reports_claude_trust_even_when_detection_says_idle() {
+        for screen in [
+            "Do you trust the files in this folder?",
+            "Quick safety check: Yes, I trust this folder",
+            "Do you trust the contents of this directory?",
+        ] {
+            assert_eq!(
+                claude_wait_status(screen, &json!({"state": "idle", "visible_idle": true})),
+                "Claude needs folder trust approval"
+            );
+        }
+        assert_eq!(
+            claude_wait_status("", &json!({"state": "working"})),
+            "Claude is already working"
+        );
+        assert_eq!(
+            claude_wait_status("", &json!({"state": "blocked"})),
+            "Claude requires input"
         );
     }
 

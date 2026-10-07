@@ -75,6 +75,15 @@ herdr-composer launch --repo /path/to/repo --attach screenshot.png - < task.txt
 herdr-composer remove --current
 ```
 
+Claude and Codex workspace trust dialogs keep your task pending. Approve trust
+in the task pane printed by Composer; it continues once the agent is ready.
+If startup times out, recover the prompt or continue the unsent session:
+
+```sh
+herdr-composer task --session ID
+herdr-composer resume --session ID
+```
+
 The CLI and editor use the same settings. In worktree mode, `--branch` must name a new branch;
 `--base current` starts from the invoking checkout. See `herdr-composer --help`
 for all options.

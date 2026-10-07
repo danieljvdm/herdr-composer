@@ -68,7 +68,7 @@ try:
                 marker=os.environ.get('FIXTURE_PROMPT_MARKER','›')
                 print(f'{marker} Ask Codex to do anything\n\n  GPT-6-Sol medium · Ready · Fast on · fixture')
             else:
-                print('Codex startup dialog')
+                print('Yes, I trust this folder' if state.get('agent',{}).get('agent')=='claude' else 'Codex startup dialog')
         elif command==['pane','close']:
             # A runner can be killed by its own close request. Check durable
             # success and unlocked state at that boundary, not after return.
@@ -98,7 +98,7 @@ try:
         elif command==['agent','list']: emit({'agents':[]})
         elif command==['agent','start']:
             if os.environ.get('FIXTURE_START_FAIL'): raise RuntimeError('agent failed to become ready')
-            state['agent']={'pane_id':flag('--pane'),'agent':'codex','name':args[2],'interactive_ready':True}
+            state['agent']={'pane_id':flag('--pane'),'agent':flag('--kind'),'name':args[2],'interactive_ready':True}
             state['readiness_polls']=0
             if os.environ.get('FIXTURE_START_BLOCKED'):
                 state_path.write_text(json.dumps(state));print(json.dumps({'error':{'code':'agent_not_ready'}}),file=sys.stderr);sys.exit(1)
@@ -112,10 +112,11 @@ try:
             poll=state['readiness_polls']
             # A false idle is followed by a trust dialog. Only after the user
             # resolves it does positive idle evidence permit the task.
-            result={'agent':'codex','state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3 and not os.environ.get('FIXTURE_VISIBLE_IDLE_FALLBACK')}
+            result={'agent':state['agent']['agent'],'state':'blocked' if poll==2 else 'idle','visible_idle':poll>=3 and not os.environ.get('FIXTURE_VISIBLE_IDLE_FALLBACK')}
             if poll>=3 and os.environ.get('FIXTURE_UNKNOWN_READY'):
                 result.update(state='unknown',visible_idle=False)
             if os.environ.get('FIXTURE_READY_INVALID'):result.pop('visible_idle')
+            if poll==2 and os.environ.get('FIXTURE_TRUST_FALSE_IDLE'):result.update(state='idle',visible_idle=True)
             state_path.write_text(json.dumps(state));print(json.dumps(result))
         elif command==['agent','prompt']:
             assert state['readiness_polls']>=3,'task sent into startup or a trust dialog'

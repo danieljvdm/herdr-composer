@@ -51,8 +51,8 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
         while time.monotonic()<deadline:
             if select.select([fd],[],[],max(0,deadline-time.monotonic()))[0]:data+=os.read(fd,65536)
         return data
-    def expect_output(fd,marker):
-        data=b'';deadline=time.monotonic()+2
+    def expect_output(fd,marker,timeout=2):
+        data=b'';deadline=time.monotonic()+timeout
         while marker not in data and time.monotonic()<deadline:
             if select.select([fd],[],[],.05)[0]:data+=os.read(fd,65536)
         assert marker in data,repr(data[-2000:])
@@ -90,7 +90,9 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     send(fd,b'\x1b');finish(pid,fd)
     saved=draft();assert saved['launch_mode']=='worktree';assert saved['task']==task;assert saved['provider']=='worktrunk';assert saved['agent']=='codex';assert saved['model']=='fixture'
     env['FIXTURE_HANDOFF_FAIL']='1'
-    pid,fd=start();send(fd,b'\x13');expect_output(fd,b'attention:');send(fd,b'\x1b');finish(pid,fd)
+    # Submission includes several external preflight calls before handoff;
+    # allow those to finish without relaxing editor responsiveness checks.
+    pid,fd=start();send(fd,b'\x13');expect_output(fd,b'attention:',timeout=10);send(fd,b'\x1b');finish(pid,fd)
     env.pop('FIXTURE_HANDOFF_FAIL')
     assert draft()==saved,'unsuccessful handoff must preserve the draft'
     pid,fd=start();send(fd,b'\x13');finish(pid,fd)
