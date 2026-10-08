@@ -85,8 +85,9 @@ is an explicit setting. Codex maps it to `service_tier="default"`, and Fast to
 Unknown custom models require an explicit agent and `allow_custom_model=true`;
 they receive no invented effort or speed support.
 
-`sow` supplies `--default-agent codex` to prefer Codex even when Composer's editor
-has another configured default. Explicit agent flags, inline `@agent` directives,
+`sow` inherits `defaults.workspace` like the editor. It supplies
+`--default-agent codex` to prefer Codex even when Composer's editor has another
+configured default. Explicit agent flags, inline `@agent` directives,
 and model choices retain their usual precedence. This override is scoped to the
 launch and does not change the editor's saved settings.
 

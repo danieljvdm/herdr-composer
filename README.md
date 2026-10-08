@@ -88,9 +88,9 @@ The CLI and editor use the same settings. In worktree mode, `--branch` must name
 `--base current` starts from the invoking checkout. See `herdr-composer --help`
 for all options.
 
-The optional `bin/sow` wrapper launches Worktrunk worktrees with the same model
-settings. Use `sow catalog --json` (or `sow catalog`) to inspect available models
-and efforts without creating a task. `sow --help` lists the wrapper's options.
+The optional `bin/sow` wrapper uses the workspace provider configured in Composer
+and the same model settings. Use `sow catalog --json` (or `sow catalog`) to inspect
+available models and efforts without creating a task. `sow --help` lists the wrapper's options.
 Put launch options before task text; use stdin or `--` when the task contains
 literal option arguments, for example `sow -- 'catalog --json'`.
 Sow defaults to Codex; explicit agents and model choices take precedence.
