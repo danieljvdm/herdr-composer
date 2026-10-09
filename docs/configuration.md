@@ -218,14 +218,16 @@ providers; the task's agent does not have to be Codex. The naming model still
 requires an authenticated Codex CLI, with the same isolated, ephemeral execution
 and 20-second timeout as branch naming.
 
-Only workspaces still displaying their checkout folder's name are eligible.
+Only workspaces created while naming is enabled and still displaying their
+checkout folder's name are eligible.
 The hook sends the last 100 lines of that agent pane (at most 6,000 characters)
 to the configured model. Once a concrete task is visible, it applies a short
 lowercase kebab-case title such as `shared-alarm-wakeup` (at most 36 characters).
 Startup screens can return no title; later status changes can try again, with
 at most three calls per workspace and no concurrent calls for that workspace.
-Successful naming stops further calls. Existing workspaces become eligible on
-their next agent status change.
+Successful naming stops further calls. Enabling or upgrading the plugin never
+enrolls already-open workspaces, including earlier unfinished naming attempts.
+Workspace creation only records eligibility; it does not wait for a model call.
 
 Before applying a title, Composer rechecks the workspace label and pane binding.
 A manual label or a moved/replaced agent cancels the update. Herdr 0.9.0 does not

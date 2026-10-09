@@ -8,6 +8,8 @@ const PROMPT: &str = "Give a short workspace title for the coding task visible i
 
 #[derive(Default, Deserialize, Serialize)]
 struct Attempt {
+    #[serde(default)]
+    observed_creation: bool,
     original_label: String,
     calls: u8,
     excerpt_hash: String,
@@ -39,20 +41,29 @@ pub fn on_event(paths: &Paths) -> Result<()> {
     }
     let event: Value = serde_json::from_str(&env::var("HERDR_PLUGIN_EVENT_JSON")?)?;
     let data = &event["data"];
-    if data["type"] != "pane_agent_status_changed"
-        || !matches!(
-            data["agent_status"].as_str(),
-            Some("working" | "idle" | "done")
-        )
+    let created = data["type"] == "workspace_created";
+    if !created
+        && (data["type"] != "pane_agent_status_changed"
+            || !matches!(
+                data["agent_status"].as_str(),
+                Some("working" | "idle" | "done")
+            ))
     {
         return Ok(());
     }
-    let workspace_id = data["workspace_id"]
-        .as_str()
-        .ok_or("missing workspace ID")?;
-    let pane_id = data["pane_id"].as_str().ok_or("missing pane ID")?;
+    let workspace_id = if created {
+        &data["workspace"]["workspace_id"]
+    } else {
+        &data["workspace_id"]
+    }
+    .as_str()
+    .ok_or("missing workspace ID")?;
     let h = Herdr::current()?;
-    let initial = workspace(&h, workspace_id)?;
+    let initial = if created {
+        data["workspace"].clone()
+    } else {
+        workspace(&h, workspace_id)?
+    };
     let worktree = &initial["worktree"];
     if worktree["is_linked_worktree"] != true {
         return Ok(());
@@ -75,21 +86,36 @@ pub fn on_event(paths: &Paths) -> Result<()> {
         .state
         .join("workspace-titles")
         .join(format!("{:x}.json", Sha256::digest(key.as_bytes())));
-    // Concurrent status events must neither duplicate model calls nor queue work.
+    // Agent activity must never enroll an already-open workspace for naming.
+    if !created && !record.exists() {
+        return Ok(());
+    }
+    // Concurrent events must neither duplicate model calls nor reset progress.
     let Ok(_lock) = storage::lock(&record.with_extension("lock")) else {
         return Ok(());
     };
-    let mut attempt = if record.exists() {
-        storage::read_json::<Attempt>(&record)?
-    } else {
-        Attempt {
-            original_label: label.into(),
-            ..Attempt::default()
+    if created {
+        if !record.exists() {
+            storage::write_json(
+                &record,
+                &Attempt {
+                    observed_creation: true,
+                    original_label: label.into(),
+                    ..Attempt::default()
+                },
+            )?;
         }
-    };
-    if attempt.finished || attempt.calls >= 3 || attempt.original_label != label {
         return Ok(());
     }
+    let mut attempt = storage::read_json::<Attempt>(&record)?;
+    if !attempt.observed_creation
+        || attempt.finished
+        || attempt.calls >= 3
+        || attempt.original_label != label
+    {
+        return Ok(());
+    }
+    let pane_id = data["pane_id"].as_str().ok_or("missing pane ID")?;
     let Some(original_pane) = pane(&h, workspace_id, pane_id)? else {
         return Ok(());
     };
