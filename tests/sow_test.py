@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='composer-sow-') as temporary:
     result = subprocess.run([str(wrapper), '--no-focus', '-b', 'dan/fix-auth', '--codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--here', '-'], input=task, env=env, text=True, capture_output=True, check=True)
     actual = json.loads(result.stdout)
     assert actual['stdin'] == task
-    assert actual['argv'] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex', '--no-focus', '--branch', 'dan/fix-auth', '--agent', 'codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--base', 'current', '-']
+    assert actual['argv'] == ['launch', '--launch-mode', 'worktree', '--default-agent', 'codex', '--no-focus', '--branch', 'dan/fix-auth', '--agent', 'codex', '--model', 'fixture-model', '--speed', 'normal', '--effort', 'medium', '--repo', '/path with spaces', '--base', 'current', '-']
     result = subprocess.run([str(wrapper), '--', '--literal', 'task'], input='', env=env, text=True, capture_output=True, check=True)
     assert json.loads(result.stdout)['argv'][-2:] == ['--', '--literal task']
     for args in [['catalog'], ['catalog', '--json']]:
@@ -35,14 +35,14 @@ with tempfile.TemporaryDirectory(prefix='composer-sow-') as temporary:
         assert json.loads(result.stdout)['argv'][-2:] == ['--', expected_task]
     result = subprocess.run([str(wrapper), '--codex', '--model', 'gpt-6.1-sol', '--effort', 'xhigh', '-'], input=task, env=env, text=True, capture_output=True, check=True)
     actual = json.loads(result.stdout)
-    assert actual['argv'] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex', '--agent', 'codex', '--model', 'gpt-6.1-sol', '--effort', 'xhigh', '-']
+    assert actual['argv'] == ['launch', '--launch-mode', 'worktree', '--default-agent', 'codex', '--agent', 'codex', '--model', 'gpt-6.1-sol', '--effort', 'xhigh', '-']
     for args in [[], ['--claude'], ['--model', 'opus'], ['--agent', 'grok']]:
         result = subprocess.run([str(wrapper), *args, '-'], input='@claude Explicit inline choice', env=env, text=True, capture_output=True, check=True)
         actual = json.loads(result.stdout)
-        assert actual['argv'][:7] == ['launch', '--provider', 'worktrunk', '--launch-mode', 'worktree', '--default-agent', 'codex']
+        assert actual['argv'][:5] == ['launch', '--launch-mode', 'worktree', '--default-agent', 'codex']
         assert actual['stdin'] == '@claude Explicit inline choice'
         if args == ['--claude']:
-            assert actual['argv'][7:] == ['--agent', 'claude', '-']
+            assert actual['argv'][5:] == ['--agent', 'claude', '-']
         else:
-            assert actual['argv'][7:] == [*args, '-']
+            assert actual['argv'][5:] == [*args, '-']
 print('sow wrapper passed: launch flags, literal arguments, stdin, read-only catalog, help, invalid options.')
