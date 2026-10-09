@@ -109,8 +109,11 @@ waiting for the model.
 
 For readable sidebar titles without delaying worktree creation, enable
 [`workspace_naming`](docs/configuration.md#workspace-titles). It names a workspace
-from early agent activity, including worktrees created directly in Herdr, without
+from the saved Composer task or early agent activity, including worktrees created
+directly in Herdr, without
 changing its Git branch or checkout path. Manually chosen labels are preserved.
+Titles include a short repository tag, such as `(taak) fix-login` or
+`(efa) reduce-startup-time`, so the flat agent list shows where each task runs.
 
 ## Native worktrees or Worktrunk
 

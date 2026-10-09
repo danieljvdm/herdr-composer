@@ -43,13 +43,27 @@ pub struct BranchNaming {
     pub speed: String,
     pub prefix: String,
 }
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspaceNaming {
     pub enabled: bool,
     pub model: String,
     pub effort: String,
     pub speed: String,
+    pub repo_prefix: bool,
+    pub repo_aliases: BTreeMap<String, String>,
+}
+impl Default for WorkspaceNaming {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: String::new(),
+            effort: String::new(),
+            speed: String::new(),
+            repo_prefix: true,
+            repo_aliases: BTreeMap::new(),
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

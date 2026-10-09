@@ -210,6 +210,7 @@ enabled = true
 model = "model-id-from-your-codex"
 effort = "medium"
 speed = "fast"
+repo_prefix = true # default
 ```
 
 Composer's asynchronous Herdr hook observes agent status changes in linked
@@ -220,11 +221,35 @@ and 20-second timeout as branch naming.
 
 Only workspaces created while naming is enabled and still displaying their
 checkout folder's name are eligible.
-The hook sends the last 100 lines of that agent pane (at most 6,000 characters)
-to the configured model. Once a concrete task is visible, it applies a short
-lowercase kebab-case title such as `shared-alarm-wakeup` (at most 36 characters).
+For Composer sessions, the hook uses the saved task text (up to 6,000 characters)
+as soon as the agent reports activity, so startup screens cannot hide the task.
+For other workspaces, it sends the last 100 lines of that agent pane (at most
+6,000 characters) to the configured model. Once a concrete task is available, it
+applies a short lowercase kebab-case task name (at most 36 characters), prefixed
+with the repository tag: `(efa) shared-alarm-wakeup`.
+
+Composer derives the tag from the repository root, independently of the naming
+model. Names of up to four characters stay intact (`taak`, `auth`); longer single
+words use their first three characters (`kommunikasie` → `kom`). Compound names
+use the first two letters and the initials of subsequent words, up to four
+characters (`effect-agent` → `efa`, `effect-cf` → `efc`). Tags stay stable regardless
+of which workspaces are open. Override ambiguous or unfamiliar abbreviations by
+repository name or full repository-root path; a path override takes precedence:
+
+```toml
+[workspace_naming.repo_aliases]
+effect-agent = "agent"
+"/work/other/auth" = "oaut"
+```
+
+Aliases accept 1–12 letters, digits, or hyphens. Set `repo_prefix = false` under
+`[workspace_naming]` to keep task-only titles. The format applies to new naming
+attempts; existing titles are preserved.
+
 Startup screens can return no title; later status changes can try again, with
 at most three calls per workspace and no concurrent calls for that workspace.
+Failed model calls and rename requests can retry on later status changes, within
+the same three-call limit. Only a confirmed rename finishes naming.
 Successful naming stops further calls. Enabling or upgrading the plugin never
 enrolls already-open workspaces, including earlier unfinished naming attempts.
 Workspace creation only records eligibility; it does not wait for a model call.

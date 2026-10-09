@@ -18,7 +18,7 @@ def emit(result):
     state_path.write_text(json.dumps(state));print(json.dumps({'result':result}))
 def workspace(path,repo):
     wid='w'+str(state['next']);state['next']+=1
-    w={'workspace_id':wid,'worktree':{'checkout_path':str(path),'repo_root':str(repo)}}
+    w={'workspace_id':wid,'label':path.name,'worktree':{'checkout_path':str(path),'repo_root':str(repo),'is_linked_worktree':path!=repo}}
     state['workspaces'].append(w)
     state['tabs'].append({'tab_id':wid+':t1','workspace_id':wid,'pane_id':wid+':p1','cwd':str(path)})
     return {'workspace':w,'root_pane':{'pane_id':wid+':p1'}}
@@ -40,14 +40,23 @@ try:
             (root/'naming-input.json').write_text(sys.stdin.read())
             if os.environ.get('FIXTURE_NAMING_FAIL'): raise RuntimeError('naming unavailable')
             if os.environ.get('FIXTURE_NAMING_EMPTY'): sys.exit(0)
+            if os.environ.get('FIXTURE_MANUAL_RENAME'):
+                state['workspaces'][-1]['label']='My chosen title';state_path.write_text(json.dumps(state))
+            if os.environ.get('FIXTURE_TITLE_PANE_CHANGED'):
+                state['agent']['name']='replacement';state_path.write_text(json.dumps(state))
             print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':os.environ.get('FIXTURE_BRANCH_NAME','fix-login-redirect')}}))
     elif program=='herdr':
         command=args[:2]
         if command==['workspace','list']: emit({'workspaces':state['workspaces']})
+        elif command==['workspace','get']: emit({'workspace':next(w for w in state['workspaces'] if w['workspace_id']==args[2])})
+        elif command==['workspace','rename']:
+            if os.environ.get('FIXTURE_RENAME_FAIL'): raise RuntimeError('rename unavailable')
+            next(w for w in state['workspaces'] if w['workspace_id']==args[2])['label']=args[3];emit({'type':'workspace_renamed'})
         elif command==['pane','list']:
             if not state_path.exists(): state_path.write_text(json.dumps(state))
             if os.environ.get('FIXTURE_PANE_LIST_DELAY'): time.sleep(float(os.environ['FIXTURE_PANE_LIST_DELAY']))
-            print(json.dumps({'result':{'panes':[t for t in state['tabs'] if flag('--workspace') in [None,t['workspace_id']]]}}))
+            agent=state.get('agent',{})
+            print(json.dumps({'result':{'panes':[dict(t,**({'agent':agent['agent'],'agent_session':agent['name']} if t['pane_id']==agent.get('pane_id') else {})) for t in state['tabs'] if flag('--workspace') in [None,t['workspace_id']]]}}))
         elif command==['worktree','list']:
             repo=next(w['worktree']['repo_root'] for w in state['workspaces'] if w['workspace_id']==flag('--workspace'));emit({'source':{'repo_root':repo},'worktrees':[]})
         elif command==['workspace','create']:
@@ -67,7 +76,9 @@ try:
             if os.environ.get('FIXTURE_HANDOFF_FAIL'): raise RuntimeError('runner handoff failed')
             emit({'type':'pane_input_sent'})
         elif command==['pane','read']:
-            if state.get('readiness_polls',0)>=3:
+            if 'FIXTURE_TITLE_EXCERPT' in os.environ:
+                print(os.environ['FIXTURE_TITLE_EXCERPT'])
+            elif state.get('readiness_polls',0)>=3:
                 marker=os.environ.get('FIXTURE_PROMPT_MARKER','›')
                 print(f'{marker} Ask Codex to do anything\n\n  GPT-6-Sol medium · Ready · Fast on · fixture')
             else:

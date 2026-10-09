@@ -22,6 +22,7 @@ cargo build --locked
 python3 tests/catalog_test.py
 python3 tests/acceptance.py
 python3 tests/composer_pty_test.py
+python3 tests/workspace_name_test.py
 python3 tests/import_test.py
 python3 tests/sow_test.py
 python3 tests/codex_shared_test.py
