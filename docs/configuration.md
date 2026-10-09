@@ -220,7 +220,8 @@ and 20-second timeout as branch naming.
 
 Only workspaces still displaying their checkout folder's name are eligible.
 The hook sends the last 100 lines of that agent pane (at most 6,000 characters)
-to the configured model. A title is applied once a concrete task is visible.
+to the configured model. Once a concrete task is visible, it applies a short
+lowercase kebab-case title such as `shared-alarm-wakeup` (at most 36 characters).
 Startup screens can return no title; later status changes can try again, with
 at most three calls per workspace and no concurrent calls for that workspace.
 Successful naming stops further calls. Existing workspaces become eligible on
