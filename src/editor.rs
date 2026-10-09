@@ -34,16 +34,6 @@ fn editor_config(c: &Config, cat: Catalog, paths: &Paths, repo: String) -> Edito
     if !repo.is_empty() && !repos.contains(&repo) {
         repos.push(repo.clone());
     }
-    let common = request::common(std::path::Path::new(&repo)).ok();
-    let current_repositories = if common.is_some() {
-        repos
-            .iter()
-            .filter(|p| request::common(std::path::Path::new(p)).ok() == common)
-            .cloned()
-            .collect()
-    } else {
-        vec![]
-    };
     EditorConfig {
         repo,
         repos,
@@ -55,7 +45,6 @@ fn editor_config(c: &Config, cat: Catalog, paths: &Paths, repo: String) -> Edito
             .collect(),
         default_provider: c.defaults.workspace.clone(),
         default_launch_mode: c.defaults.launch_mode,
-        current_repositories,
         default_agent: c.defaults.agent.clone(),
         focus: c.defaults.focus,
         attachment_dir: paths
@@ -66,16 +55,37 @@ fn editor_config(c: &Config, cat: Catalog, paths: &Paths, repo: String) -> Edito
         ..EditorConfig::default()
     }
 }
-fn discover(c: Config) -> std::sync::mpsc::Receiver<Result<Catalog>> {
+fn discover(
+    mut c: Config,
+    paths: Paths,
+    repo: String,
+) -> std::sync::mpsc::Receiver<Result<(Config, EditorConfig)>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(Catalog::load(&c, true));
+        let result = (|| {
+            c.add_open_repositories();
+            let cat = Catalog::load(&c, true)?;
+            let mut editor = editor_config(&c, cat, &paths, repo.clone());
+            if let Ok(common) = request::common(std::path::Path::new(&repo)) {
+                editor.current_repositories = editor
+                    .repos
+                    .iter()
+                    .filter(|p| {
+                        *p == &repo
+                            || request::common(std::path::Path::new(p)).ok().as_ref()
+                                == Some(&common)
+                    })
+                    .cloned()
+                    .collect();
+            }
+            Ok((c, editor))
+        })();
+        let _ = tx.send(result);
     });
     rx
 }
 pub fn run(paths: &Paths) -> Result<()> {
     let mut config = paths.load()?;
-    config.add_open_repositories();
     let invoking = match env::var("COMPOSER_INVOKING_CHECKOUT") {
         Ok(s) if s.is_empty() => None,
         Ok(s) => request::checkout(std::path::Path::new(&s)).ok(),
@@ -91,8 +101,8 @@ pub fn run(paths: &Paths) -> Result<()> {
         editor_config(&config, Catalog::load(&config, false)?, paths, repo.clone()),
         draft,
     );
-    let mut discovery = Some(discover(config.clone()));
-    app.message = "Loading catalog… Ctrl+R refreshes".into();
+    let mut discovery = Some(discover(config.clone(), paths.clone(), repo.clone()));
+    app.message = "Loading repositories and catalog… Ctrl+R refreshes".into();
     app.graphics = graphics::Graphics::from_env();
     let mut terminal = ratatui::init();
     let previous = std::panic::take_hook();
@@ -118,9 +128,10 @@ pub fn run(paths: &Paths) -> Result<()> {
             if let Some(rx) = &discovery {
                 if let Ok(result) = rx.try_recv() {
                     match result {
-                        Ok(cat) => {
-                            app.message = cat.diagnostics.join("; ");
-                            app.config = editor_config(&config, cat, paths, repo.clone());
+                        Ok((c, editor)) => {
+                            app.message = editor.catalog.diagnostics.join("; ");
+                            config = c;
+                            app.config = editor;
                         }
                         Err(e) => app.message = format!("Catalog: {e}"),
                     };
@@ -160,11 +171,9 @@ pub fn run(paths: &Paths) -> Result<()> {
                 {
                     if discovery.is_none() {
                         match paths.load() {
-                            Ok(mut c) => {
-                                c.add_open_repositories();
-                                config = c;
-                                discovery = Some(discover(config.clone()));
-                                app.message = "Loading catalog…".into();
+                            Ok(c) => {
+                                discovery = Some(discover(c, paths.clone(), repo.clone()));
+                                app.message = "Loading repositories and catalog…".into();
                             }
                             Err(e) => app.message = e.to_string(),
                         }

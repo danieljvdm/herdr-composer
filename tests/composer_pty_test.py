@@ -17,21 +17,29 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
     (config/'config.toml').write_text(settings)
     env=dict(os.environ,TERM='xterm-256color',PATH=str(bin),COMPOSER_CONFIG_DIR=str(config),COMPOSER_STATE_DIR=str(tmp/'state'),HERDR_SOCKET_PATH=str(tmp/'socket'),HERDR_BIN_PATH=str(bin/'herdr'),FIXTURE_ROOT=str(tmp))
     for key in ['HERDR_PLUGIN_CONFIG_DIR','HERDR_PLUGIN_STATE_DIR','HERDR_ENV','HERDR_PANE_ID','COMPOSER_INVOKING_CHECKOUT']:env.pop(key,None)
-    def start(remote=False):
+    def start(remote=False, slow_discovery=False):
         pid,fd=pty.fork()
         if pid==0:
             os.chdir(repo)
             childenv=dict(env)
+            if slow_discovery:childenv['FIXTURE_PANE_LIST_DELAY']='2'
             if remote:childenv['SSH_CONNECTION']='192.0.2.1 1234 192.0.2.2 22'
             else:childenv.pop('SSH_CONNECTION',None);childenv.pop('SSH_TTY',None)
             os.execve(str(binary),[str(binary)],childenv)
         fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',32,110,0,0))
-        data=b'';deadline=time.monotonic()+5
+        data=b'';deadline=time.monotonic()+5;rendered=False;typed=False
         while b'CATALOG_READY' not in data and time.monotonic()<deadline:
             if select.select([fd],[],[],.1)[0]:data+=os.read(fd,65536)
+            if not rendered and b'New task' in data:
+                rendered=True
+                if slow_discovery:os.write(fd,b'\x1b[200~STARTUP_PROBE\x1b[201~')
+            if slow_discovery and b'STARTUP_PROBE' in data and b'CATALOG_READY' not in data:
+                typed=True
         assert b'CATALOG_READY' in data,repr(data[-1000:])
         assert b'\x1b[?1002h' in data, 'drag tracking must remain enabled'
         assert b'\x1b[?1003h' not in data, 'unused hover tracking floods remote input'
+        if slow_discovery:
+            assert typed, 'typing must render before repository discovery finishes'
         return pid,fd
     def finish(pid,fd):
         deadline=time.monotonic()+8;data=b''
@@ -63,6 +71,12 @@ with tempfile.TemporaryDirectory(prefix='composer-pty-') as tmp:
         result=subprocess.run([str(binary),'__run',json.loads(record.read_text())['id']],env=env,cwd=repo,text=True,capture_output=True)
         assert result.returncode==0,result.stderr
         assert json.loads(record.read_text())['delivery']=='Confirmed'
+    pid,fd=start(slow_discovery=True)
+    # Refresh must leave typing and closing responsive while discovery is stalled.
+    send(fd,b'\x12');os.write(fd,b'\x1b[200~REFRESH_PROBE\x1b[201~');expect_output(fd,b'REFRESH_PROBE',timeout=1)
+    send(fd,b'\x1b');finish(pid,fd)
+    assert draft()['task']=='STARTUP_PROBEREFRESH_PROBE'
+    pid,fd=start();send(fd,b'\x7f'*len(draft()['task'])+b'\x1b');finish(pid,fd)
     pid,fd=start(remote=True)
     collect(fd,.3)
     assert collect(fd,.4)==b'', 'idle editor should not produce terminal traffic'

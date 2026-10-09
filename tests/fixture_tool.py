@@ -44,7 +44,10 @@ try:
     elif program=='herdr':
         command=args[:2]
         if command==['workspace','list']: emit({'workspaces':state['workspaces']})
-        elif command==['pane','list']: emit({'panes':[t for t in state['tabs'] if flag('--workspace') in [None,t['workspace_id']]]})
+        elif command==['pane','list']:
+            if not state_path.exists(): state_path.write_text(json.dumps(state))
+            if os.environ.get('FIXTURE_PANE_LIST_DELAY'): time.sleep(float(os.environ['FIXTURE_PANE_LIST_DELAY']))
+            print(json.dumps({'result':{'panes':[t for t in state['tabs'] if flag('--workspace') in [None,t['workspace_id']]]}}))
         elif command==['worktree','list']:
             repo=next(w['worktree']['repo_root'] for w in state['workspaces'] if w['workspace_id']==flag('--workspace'));emit({'source':{'repo_root':repo},'worktrees':[]})
         elif command==['workspace','create']:

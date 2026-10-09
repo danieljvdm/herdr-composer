@@ -87,6 +87,7 @@ impl Config {
         let Ok(panes) = h.call(&["pane", "list"]) else {
             return;
         };
+        let mut seen = std::collections::HashSet::new();
         for pane in panes
             .pointer("/result/panes")
             .and_then(serde_json::Value::as_array)
@@ -94,6 +95,9 @@ impl Config {
             .flatten()
         {
             if let Some(cwd) = pane["cwd"].as_str() {
+                if !seen.insert(cwd) {
+                    continue;
+                }
                 if let Ok(root) = crate::request::primary(std::path::Path::new(cwd)) {
                     let p = root.to_string_lossy().into_owned();
                     if !self.repositories.contains(&p) {
