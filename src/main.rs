@@ -34,6 +34,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("__run") => session::run(&paths.state, args.get(1).ok_or("missing session ID")?),
+        Some("__workspace-title") => herdr_composer::workspace_name::on_event(&paths),
         Some("__codex-hook" | "__codex-notify") => herdr_composer::codex_shared::hook(&args),
         Some("resume") if args.len() == 3 && args[1] == "--session" => {
             session::resume(&paths.state, &args[2])

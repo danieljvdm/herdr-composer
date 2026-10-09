@@ -8,6 +8,7 @@ pub mod process;
 pub mod request;
 pub mod session;
 pub mod storage;
+pub mod workspace_name;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub const VERSION: u32 = 1;

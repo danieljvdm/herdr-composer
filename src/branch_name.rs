@@ -16,6 +16,34 @@ pub fn generate(config: &BranchNaming, task: &str) -> Result<String> {
             &format!("{}example", config.prefix),
         ],
     )?;
+    let name = complete(
+        &config.model,
+        &config.effort,
+        &config.speed,
+        PROMPT,
+        &json!({"task": task}),
+    )?;
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 48
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || name.starts_with('-')
+        || name.ends_with('-')
+    {
+        return Err("branch naming returned an invalid name".into());
+    }
+    Ok(format!("{}{name}", config.prefix))
+}
+
+pub(crate) fn complete(
+    model: &str,
+    effort: &str,
+    speed: &str,
+    prompt: &str,
+    input: &Value,
+) -> Result<String> {
     let mut args: Vec<String> = [
         "codex",
         "exec",
@@ -39,19 +67,14 @@ pub fn generate(config: &BranchNaming, task: &str) -> Result<String> {
     .collect();
     args.extend(catalog::native_args(
         "codex",
-        Some(&config.model),
-        (!config.effort.is_empty()).then_some(config.effort.as_str()),
-        (!config.speed.is_empty()).then_some(config.speed.as_str()),
+        Some(model),
+        (!effort.is_empty()).then_some(effort),
+        (!speed.is_empty()).then_some(speed),
     )?);
-    args.push(PROMPT.into());
-    let output = process::run(
-        &args,
-        Path::new("/"),
-        Some(&json!({"task": task})),
-        Duration::from_secs(20),
-    )?
-    .checked()?;
-    let name = output
+    args.push(prompt.into());
+    let output =
+        process::run(&args, Path::new("/"), Some(input), Duration::from_secs(20))?.checked()?;
+    output
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|event| {
@@ -59,17 +82,5 @@ pub fn generate(config: &BranchNaming, task: &str) -> Result<String> {
         })
         .filter_map(|event| event["item"]["text"].as_str().map(String::from))
         .next_back()
-        .ok_or("branch naming returned no final answer")?;
-    let name = name.trim();
-    if name.is_empty()
-        || name.len() > 48
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        || name.starts_with('-')
-        || name.ends_with('-')
-    {
-        return Err("branch naming returned an invalid name".into());
-    }
-    Ok(format!("{}{name}", config.prefix))
+        .ok_or_else(|| "naming returned no final answer".into())
 }

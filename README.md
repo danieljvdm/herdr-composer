@@ -107,6 +107,11 @@ and prefix are configurable. Explicit branch names always take precedence.
 Naming runs in the background after handoff, so the editor closes without
 waiting for the model.
 
+For readable sidebar titles without delaying worktree creation, enable
+[`workspace_naming`](docs/configuration.md#workspace-titles). It names a workspace
+from early agent activity, including worktrees created directly in Herdr, without
+changing its Git branch or checkout path. Manually chosen labels are preserved.
+
 ## Native worktrees or Worktrunk
 
 New-worktree mode uses native Herdr worktrees by default. To use Worktrunk's checkout

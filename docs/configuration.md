@@ -200,6 +200,40 @@ name falls back to a unique `task-<id>` name. The reason appears in CLI/runner
 output and the saved session record. To choose a name yourself, use the editor's
 Branch name field or CLI `--branch`.
 
+## Workspace titles
+
+Workspace naming is independent of branch naming and off by default:
+
+```toml
+[workspace_naming]
+enabled = true
+model = "model-id-from-your-codex"
+effort = "medium"
+speed = "fast"
+```
+
+Composer's asynchronous Herdr hook observes agent status changes in linked
+worktree workspaces. It works with native Herdr creation and other worktree
+providers; the task's agent does not have to be Codex. The naming model still
+requires an authenticated Codex CLI, with the same isolated, ephemeral execution
+and 20-second timeout as branch naming.
+
+Only workspaces still displaying their checkout folder's name are eligible.
+The hook sends the last 100 lines of that agent pane (at most 6,000 characters)
+to the configured model. A title is applied once a concrete task is visible.
+Startup screens can return no title; later status changes can try again, with
+at most three calls per workspace and no concurrent calls for that workspace.
+Successful naming stops further calls. Existing workspaces become eligible on
+their next agent status change.
+
+Before applying a title, Composer rechecks the workspace label and pane binding.
+A manual label or a moved/replaced agent cancels the update. Herdr 0.9.0 does not
+expose whether a label was manually set, so an explicit label identical to the
+checkout folder name is indistinguishable from the default. Branch names, paths,
+focus, and task delivery are unaffected. Naming attempts retain only counters
+and a content digest under the plugin state directory, never terminal excerpts.
+Failures appear in `herdr plugin log list --plugin composer`.
+
 ## Prose suggestions
 
 Prose suggestions are off by default. Set top-level

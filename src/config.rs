@@ -43,6 +43,14 @@ pub struct BranchNaming {
     pub speed: String,
     pub prefix: String,
 }
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspaceNaming {
+    pub enabled: bool,
+    pub model: String,
+    pub effort: String,
+    pub speed: String,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedCodex {
@@ -63,6 +71,7 @@ pub struct Config {
     pub providers: BTreeMap<String, Provider>,
     pub prose_resolver: Vec<String>,
     pub branch_naming: BranchNaming,
+    pub workspace_naming: WorkspaceNaming,
     pub codex: Codex,
 }
 #[derive(Clone)]
